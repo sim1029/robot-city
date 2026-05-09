@@ -50,6 +50,13 @@ export async function runStage(
     latencyMs: result.latencyMs,
   }
 
+  if (sessionId) {
+    db.run(
+      `INSERT OR IGNORE INTO sessions (id, created_at, total_cost_usd) VALUES (?, ?, 0)`,
+      [sessionId, Date.now()]
+    )
+  }
+
   db.run(
     `INSERT INTO events (session_id, type, model, input_tokens, output_tokens, cost_usd, latency_ms, payload)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,

@@ -46,12 +46,40 @@ $0.0041 (sonnet-4.6)  •  session $0.018
 
 ## Discord-as-frontend
 
-- CLI's `robot-city init` walks the user through:
-  1. Create personal Discord server (template link)
-  2. Invite bot via OAuth
-  3. Bot auto-creates a forum channel called `#robot-city`
-- Each forum post = a session. Sidebar of posts = sidebar of sessions.
-- Bot DMs the user only for proactive pings + approval prompts.
+### Why Discord
+
+We considered a custom web app and Telegram before landing on Discord. The deciding factors:
+
+- **Already installed.** The target audience (power users, developers, OpenClaude users) already has Discord on their phone and desktop. No install friction, no new app to remember to open.
+- **Background notifications.** Unlike a web app, Discord delivers push notifications even when the user isn't actively looking at it. This is essential for proactive pings (urgent emails, follow-up reminders, approval prompts).
+- **Forum channels give us the ChatGPT-style sidebar for free.** Discord forum channels display posts as a browsable list — exactly the session sidebar familiar from ChatGPT and other LLM interfaces — without us building a custom frontend.
+
+A custom web app was rejected because it requires the user to install a PWA and configure push permissions, which adds friction at exactly the moment (onboarding) where we can least afford it. Telegram was considered but Discord's forum-channel UX is a better fit for multi-session browsing.
+
+### Session model
+
+Each forum post in the `#robot-city` channel = one isolated conversation session. The context window for a session is scoped strictly to that thread — nothing from other threads leaks in.
+
+**Why explicit isolation matters:** LLM cost scales with context length. The longer a conversation runs, the more tokens get re-sent with every new message (the full prior conversation is included each turn). Isolated sessions let users naturally reset the context when they switch topics. The per-message cost footer (see below) makes this cost visible, teaching the habit of opening a new post when starting something unrelated rather than continuing a long-running thread.
+
+Users decide when a session is "done" — there is no auto-close. Starting a new forum post is the clear/reset action. Old posts remain readable but are not continued.
+
+### Onboarding flow (`robot-city init`)
+
+`robot-city init` automates the Discord setup so the user never touches the Discord developer portal:
+
+1. Opens a browser to Discord OAuth — user grants the bot permission to create a server and manage channels.
+2. Bot creates a personal Discord server from a template (or joins an existing server if the user prefers).
+3. Bot creates a forum channel called `#robot-city` inside that server.
+4. CLI confirms setup complete and prints the channel link.
+
+After init, the user's entire interaction with robot-city happens inside Discord:
+
+- **Conversations:** post in `#robot-city` to start a session; reply in the thread to continue it.
+- **Proactive pings:** bot sends a DM to the user (morning brief, urgent email alert, follow-up due).
+- **Approval prompts:** Discord button cards (Approve / Edit / Cancel) sent as DMs or in-thread for outbound actions.
+
+Bot DMs are one-way notifications and confirmations only — they do not start new sessions or persist context.
 
 ## Cross-session memory
 

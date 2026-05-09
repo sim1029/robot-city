@@ -1,7 +1,8 @@
 const DISCORD_API = 'https://discord.com/api/v10'
 
-// Bot permissions: Manage Channels + Send Messages + Read Message History + Create Public Threads
-const BOT_PERMISSIONS = '292057795648'
+// Manage Channels + View Channel + Send Messages + Embed Links + Read Message History
+// + Add Reactions + Manage Threads + Create Public Threads + Send Messages in Threads
+const BOT_PERMISSIONS = '326417599568'
 
 export function getOAuthUrl(state: string): string {
   const clientId = process.env.DISCORD_CLIENT_ID

@@ -2,9 +2,13 @@
   "name": "robot-city",
   "version": "0.1.0",
   "private": true,
+  "bin": {
+    "robot-city": "src/cli/init.ts"
+  },
   "scripts": {
     "dev": "bun --watch src/index.ts",
     "start": "bun src/index.ts",
+    "init": "bun src/cli/init.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
