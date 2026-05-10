@@ -4,6 +4,12 @@ import { db } from './db/client'
 import { getKey, setKey } from './vault'
 import { runStage, runPipeline, buildFooter } from './stages/runner'
 import { getOAuthUrl, exchangeCode, getCurrentUser } from './discord/oauth'
+import { getGmailAuthUrl, exchangeGmailCode } from './gmail/oauth'
+import { saveGmailTokens, loadGmailTokens } from './gmail/tokens'
+import { getProfile } from './gmail/client'
+import { runTriageTick } from './gmail/triage_loop'
+import { registerSendEmailTool } from './tools/send_email'
+import { startBot } from './discord/bot'
 import type { StageName } from './stages/types'
 
 migrate()
@@ -52,6 +58,59 @@ app.get('/auth/discord/callback', async (c) => {
     )
 
     return c.json({ ok: true, user: { id: user.id, username: user.username }, guild_id: guildId })
+  } catch (err) {
+    return c.json({ error: String(err) }, 500)
+  }
+})
+
+// ── Gmail OAuth ───────────────────────────────────────────────────────────────
+
+const gmailOauthStates = new Map<string, number>()
+
+app.get('/auth/google', (c) => {
+  const state = crypto.randomUUID()
+  gmailOauthStates.set(state, Date.now() + 10 * 60 * 1000)
+  return c.redirect(getGmailAuthUrl(state))
+})
+
+app.get('/auth/google/callback', async (c) => {
+  const code = c.req.query('code')
+  const state = c.req.query('state')
+  if (!code || !state) return c.json({ error: 'Missing code or state' }, 400)
+
+  const expiry = gmailOauthStates.get(state)
+  if (!expiry || Date.now() > expiry) return c.json({ error: 'Invalid or expired state' }, 400)
+  gmailOauthStates.delete(state)
+
+  try {
+    const tokens = await exchangeGmailCode(code)
+    const profile = await getProfile(tokens.access_token)
+    saveGmailTokens({
+      user_id: profile.emailAddress,
+      access_token: tokens.access_token,
+      refresh_token: tokens.refresh_token,
+      expires_at: Date.now() + tokens.expires_in * 1000,
+      scope: tokens.scope,
+      history_id: profile.historyId,
+    })
+    registerSendEmailTool(profile.emailAddress)
+    return c.json({ ok: true, email: profile.emailAddress })
+  } catch (err) {
+    return c.json({ error: String(err) }, 500)
+  }
+})
+
+app.post('/gmail/poll', async (c) => {
+  const body = await c.req.json<{ gmail_user_id?: string; discord_user_id?: string }>()
+  if (!body.gmail_user_id || !body.discord_user_id) {
+    return c.json({ error: 'gmail_user_id and discord_user_id required' }, 400)
+  }
+  try {
+    const result = await runTriageTick({
+      gmailUserId: body.gmail_user_id,
+      discordUserId: body.discord_user_id,
+    })
+    return c.json(result)
   } catch (err) {
     return c.json({ error: String(err) }, 500)
   }
@@ -128,6 +187,15 @@ app.get('/events', (c) => {
 })
 
 // ── Server ────────────────────────────────────────────────────────────────────
+
+// Restore send_email handler for any Gmail account already onboarded
+for (const row of db.query('SELECT user_id FROM gmail_tokens').all() as Array<{ user_id: string }>) {
+  registerSendEmailTool(row.user_id)
+}
+
+if (process.env.DISCORD_BOT_TOKEN) {
+  startBot().catch((err) => console.error('Discord bot failed to start:', err))
+}
 
 const port = Number(process.env.PORT ?? 3000)
 console.log(`robot-city listening on http://localhost:${port}`)

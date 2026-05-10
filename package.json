@@ -9,6 +9,7 @@
     "dev": "bun --watch src/index.ts",
     "start": "bun src/index.ts",
     "init": "bun src/cli/init.ts",
+    "test": "DB_PATH=:memory: bun test",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
