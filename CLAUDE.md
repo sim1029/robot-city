@@ -116,3 +116,6 @@ After finishing a task, ask yourself: **did I learn something a future session w
 - Made or surfaced an architectural decision (e.g., chose a library, ruled one out) → add a line to **Conventions** or **Things to NOT do**.
 
 Keep this file tight. If a section grows past ~15 lines, it probably belongs in `SPEC.md` or its own doc. **Prune as aggressively as you add.** Stale guidance is worse than no guidance.
+
+## Tool Versions
+- bun v1.3.13
