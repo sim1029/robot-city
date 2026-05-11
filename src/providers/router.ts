@@ -6,7 +6,7 @@ import { getKey } from '../vault'
 import pricing from '../../pricing.json'
 
 type PricingMap = Record<string, { input: number; output: number }>
-const PRICING = pricing as PricingMap
+const PRICING = pricing as unknown as PricingMap
 
 export async function callLLM(req: LLMRequest): Promise<LLMResponse & { costUsd: number }> {
   let response: LLMResponse
