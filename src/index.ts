@@ -1,4 +1,5 @@
 import { Hono } from 'hono'
+import { serveStatic } from 'hono/bun'
 import { migrate } from './db/schema'
 import { db } from './db/client'
 import { getKey, setKey } from './vault'
@@ -14,15 +15,48 @@ import { startBot } from './discord/bot'
 import { startScheduler } from './cron/scheduler'
 import { generateBrief } from './workflows/morning_brief'
 import { getAllSettings, getSetting, setSetting } from './db/settings'
+import { requireOwner, csrf } from './auth/middleware'
+import { cleanupExpiredSessions } from './auth/sessions'
+import { authRouter } from './auth/discord_login'
+import { loginRoutes } from './admin/login_page'
+import { adminRouter } from './admin/router'
 import type { StageName } from './stages/types'
 
 migrate()
+cleanupExpiredSessions()
+
+if (!process.env.OWNER_DISCORD_ID) {
+  console.warn('[auth] OWNER_DISCORD_ID is not set — admin dashboard will reject all logins until configured.')
+}
 
 const app = new Hono()
+
+// ── Static admin assets (NO auth — must be registered before /admin/* middleware) ─
+
+app.use('/admin/static/*', serveStatic({ root: './public' }))
+
+// ── Auth middleware on protected groups ───────────────────────────────────────
+
+app.use('/admin', requireOwner, csrf)
+app.use('/admin/*', requireOwner, csrf)
+app.use('/auth/logout', requireOwner, csrf)
+app.use('/vault/*', requireOwner, csrf)
+app.use('/settings', requireOwner, csrf)
+app.use('/settings/*', requireOwner, csrf)
+app.use('/cron/*', requireOwner, csrf)
+app.use('/events', requireOwner, csrf)
+app.use('/stages/*', requireOwner, csrf)
+app.use('/gmail/poll', requireOwner, csrf)
 
 // ── Health ────────────────────────────────────────────────────────────────────
 
 app.get('/health', (c) => c.json({ status: 'ok', ts: Date.now() }))
+
+// ── Admin dashboard login + session ───────────────────────────────────────────
+
+app.route('/', loginRoutes)
+app.route('/', authRouter)
+app.route('/admin', adminRouter)
 
 // ── Discord OAuth ─────────────────────────────────────────────────────────────
 

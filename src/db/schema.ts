@@ -86,6 +86,18 @@ export function migrate() {
     )
   `)
 
+  db.run(`
+    CREATE TABLE IF NOT EXISTS admin_sessions (
+      id TEXT PRIMARY KEY,
+      discord_user_id TEXT NOT NULL,
+      csrf_token TEXT NOT NULL,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      expires_at INTEGER NOT NULL,
+      last_seen_at INTEGER NOT NULL DEFAULT (unixepoch())
+    )
+  `)
+  db.run('CREATE INDEX IF NOT EXISTS idx_admin_sessions_expires ON admin_sessions(expires_at)')
+
   const settingDefaults: Record<string, string> = {
     brief_morning_enabled: 'true',
     brief_morning_hour: '8',

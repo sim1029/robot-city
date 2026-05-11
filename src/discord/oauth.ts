@@ -21,10 +21,10 @@ export function getOAuthUrl(state: string): string {
   return `https://discord.com/oauth2/authorize?${params}`
 }
 
-export async function exchangeCode(code: string): Promise<DiscordTokenResponse> {
+export async function exchangeCode(code: string, redirectUri?: string): Promise<DiscordTokenResponse> {
   const clientId = process.env.DISCORD_CLIENT_ID!
   const clientSecret = process.env.DISCORD_CLIENT_SECRET!
-  const redirectUri = process.env.DISCORD_REDIRECT_URI!
+  const finalRedirectUri = redirectUri ?? process.env.DISCORD_REDIRECT_URI!
 
   const res = await fetch(`${DISCORD_API}/oauth2/token`, {
     method: 'POST',
@@ -34,7 +34,7 @@ export async function exchangeCode(code: string): Promise<DiscordTokenResponse> 
       client_secret: clientSecret,
       grant_type: 'authorization_code',
       code,
-      redirect_uri: redirectUri,
+      redirect_uri: finalRedirectUri,
     }),
   })
   if (!res.ok) throw new Error(`Discord token exchange failed ${res.status}: ${await res.text()}`)

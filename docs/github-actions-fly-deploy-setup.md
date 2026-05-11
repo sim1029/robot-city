@@ -42,13 +42,20 @@ Two jobs: `verify` (typecheck + tests) gates `deploy` (flyctl).
 4. **Set secrets** (every env var the runtime reads — these are NOT in `fly.toml`):
    ```
    flyctl secrets set \
-     DISCORD_CLIENT_ID=... DISCORD_CLIENT_SECRET=... DISCORD_BOT_TOKEN=... DISCORD_REDIRECT_URI=https://robot-city.fly.dev/auth/discord/callback \
+     DISCORD_CLIENT_ID=... DISCORD_CLIENT_SECRET=... DISCORD_BOT_TOKEN=... \
+     DISCORD_REDIRECT_URI=https://robot-city.fly.dev/auth/discord/callback \
+     DISCORD_LOGIN_REDIRECT_URI=https://robot-city.fly.dev/auth/discord/login/callback \
+     OWNER_DISCORD_ID=<your-discord-user-id> \
      GOOGLE_CLIENT_ID=... GOOGLE_CLIENT_SECRET=... GOOGLE_REDIRECT_URI=https://robot-city.fly.dev/auth/google/callback \
      VAULT_PASSPHRASE=... \
      --app robot-city
    ```
-   (Provider API keys — Anthropic/OpenAI/Google — are stored in the vault via `POST /vault/keys/*`, not Fly secrets. Only `VAULT_PASSPHRASE` is required as a Fly secret.)
-5. **Update OAuth redirect URIs** in Google Cloud Console and Discord Developer Portal to point at `https://robot-city.fly.dev/...`.
+   (Provider API keys — Anthropic/OpenAI/Google — are stored in the vault via the `/admin/vault` dashboard or `POST /vault/keys/*`, not Fly secrets. Only `VAULT_PASSPHRASE` is required as a Fly secret.)
+   
+   To find your Discord user ID for `OWNER_DISCORD_ID`: in Discord, Settings → Advanced → enable Developer Mode → right-click your username → "Copy User ID".
+5. **Update OAuth redirect URIs** in the providers:
+   - Google Cloud Console: add `https://robot-city.fly.dev/auth/google/callback`.
+   - Discord Developer Portal → OAuth2 → Redirects: add **both** `https://robot-city.fly.dev/auth/discord/callback` (bot install) and `https://robot-city.fly.dev/auth/discord/login/callback` (dashboard login).
 6. **Mint a Fly API token** for CI: `flyctl tokens create deploy --name github-actions --app robot-city` → copy the token.
 7. **Add to GitHub repo secrets**: Settings → Secrets and variables → Actions → New repository secret → `FLY_API_TOKEN` = (the token from step 6).
 

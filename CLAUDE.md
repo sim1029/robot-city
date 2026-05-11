@@ -38,6 +38,10 @@ src/
                         #   + sessions.ts (cost accumulator, discord_thread linkage, stats, close)
   cron/                 # scheduler.ts: setInterval tick for morning/midday/evening briefs
   vault/                # encrypted BYOK key storage
+  auth/                 # sessions.ts (admin_sessions table helpers),
+                        #   middleware.ts (requireOwner + csrf), discord_login.ts (login OAuth flow)
+  admin/                # router.ts + home/settings/vault/actions pages (HTMX + server-rendered HTML)
+public/admin/static/    # styles.css (htmx is loaded via CDN+SRI from layout.ts)
 tests/                  # bun test suites; tests/_helpers/fetch-mock.ts stubs HTTP globally
 data/                   # SQLite files (gitignored)
 pricing.json            # provider:model:tier → $/1M tokens, refreshed monthly
@@ -94,6 +98,7 @@ Tests live under `tests/` and use `bun test`. Stub HTTP via `installFetchMock()`
 - **User settings are a generic KV table (`user_settings`).** Use `getSetting/setSetting` from `src/db/settings.ts`. Managed via `GET/PUT /settings` API; Discord/admin UI management deferred to M5.
 - **M3 session UX:** running session $ in every footer; thread archive = session close (stats-only summary, no LLM); `runStage` accepts `string | Array<{role, content}>` so reason stage gets full thread history.
 - **Deploy = Fly.io, one always-on Machine.** GH Actions (`.github/workflows/deploy.yml`) runs typecheck + tests, then `flyctl deploy --remote-only` on push to `main` or `workflow_dispatch`. `auto_stop_machines = "off"` because Gmail polling + cron scheduler are in-process `setInterval` loops. SQLite + vault state live on volume `robot_city_data` mounted at `/data` (`DB_PATH=/data/robot-city.db`). One-time setup (app create, volume create, secrets, `FLY_API_TOKEN` GH secret) documented in `docs/github-actions-fly-deploy-setup.md`.
+- **HTTP routes are owner-only by default.** All `/admin/*`, `/vault/*`, `/settings`, `/cron/*`, `/events`, `/stages/*`, `/gmail/poll`, and `/auth/logout` go through `requireOwner` + `csrf` middleware (`src/auth/middleware.ts`). Public carve-outs: `/health`, `/auth/*` (OAuth callbacks), `/login`, `/admin/static/*`. Login is Discord OAuth `identify` scope at `/auth/discord/login` — separate from the bot-install flow at `/auth/discord` (different scopes, different `DISCORD_LOGIN_REDIRECT_URI`). Owner identity = `OWNER_DISCORD_ID` env var. Sessions live in `admin_sessions` SQLite table; cookie is HttpOnly+Secure+SameSite=Lax, CSRF via double-submit token (`X-CSRF-Token` header vs `rc_csrf` cookie). Design: `docs/admin-dashboard-and-auth-design.md`.
 
 ## Personal preferences for working in this repo
 When you are planning out changes with a harnesses "plan mode", make sure to write out your finalized plan ONCE APPROVED to docs/ directory. The .md file name can be long and descriptive I should be able to immedietly tell what the file was used for by the title of it.
