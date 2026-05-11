@@ -8,7 +8,9 @@ import { gatherForIntent } from '../stages/gather'
 import { dispatchAct } from '../stages/act_dispatcher'
 import { buildResolvedCardPayload, parseApprovalCustomId } from './approval_card'
 import { editChannelMessage, sendApprovalCardForApproval, sendThreadMessage, sendTypingIndicator } from './dm'
+import { fetchThreadHistory, type ThreadHistoryMessage } from './history'
 import { getSetting } from '../db/settings'
+import { computeSessionStats, getSessionCost, markSessionClosed } from '../db/sessions'
 import { db } from '../db/client'
 
 export { sendApprovalCardForApproval }
@@ -73,6 +75,7 @@ export async function handleApprovalInteraction(args: {
 export async function handleThreadMessage(args: {
   threadId: string
   userId: string
+  messageId: string
   content: string
 }): Promise<void> {
   const sessionId = `discord:${args.threadId}`
@@ -83,6 +86,8 @@ export async function handleThreadMessage(args: {
     .query('SELECT user_id FROM gmail_tokens LIMIT 1')
     .get() as { user_id: string } | null
   const gmailUserId = gmailRow?.user_id ?? ''
+
+  const history = await fetchThreadHistory(args.threadId, args.messageId).catch(() => [] as ThreadHistoryMessage[])
 
   const classifyResult = await runStage(
     'classify',
@@ -96,14 +101,19 @@ export async function handleThreadMessage(args: {
 
   const dateHeader = currentDateHeader()
 
-  const reasonPrompt = [
+  const latestUserContent = [
     dateHeader,
     `[ORIGINAL MESSAGE]\n${args.content}`,
     `[CLASSIFY]\n${classifyResult.text}`,
     gatherData ? `[CONTEXT]\n${gatherData}` : '',
   ].filter(Boolean).join('\n\n')
 
-  const reasonResult = await runStage('reason', reasonPrompt, sessionId)
+  const reasonMessages: ThreadHistoryMessage[] = [
+    ...history,
+    { role: 'user', content: latestUserContent },
+  ]
+
+  const reasonResult = await runStage('reason', reasonMessages, sessionId)
 
   const actPrompt = [
     dateHeader,
@@ -130,7 +140,30 @@ export async function handleThreadMessage(args: {
     }
   }
 
-  const footer = buildFooter([classifyResult, reasonResult, actResult])
+  const sessionCost = getSessionCost(sessionId)
+  const footer = buildFooter([classifyResult, reasonResult, actResult], sessionCost)
   const reply = `${reasonResult.text}${dispatchNote}\n\n${footer}`
   await sendThreadMessage(args.threadId, reply)
+}
+
+export async function handleThreadArchive(args: { threadId: string }): Promise<void> {
+  const sessionId = `discord:${args.threadId}`
+  const stats = computeSessionStats(sessionId)
+  if (!stats) return
+  if (stats.closedAt) return
+
+  const summary = formatSessionSummary(stats)
+  await sendThreadMessage(args.threadId, summary)
+  markSessionClosed(sessionId)
+}
+
+function formatSessionSummary(stats: ReturnType<typeof computeSessionStats> & {}): string {
+  const msgWord = stats.messageCount === 1 ? 'message' : 'messages'
+  const toolWord = stats.toolCount === 1 ? 'tool call' : 'tool calls'
+  return [
+    '**Session closed**',
+    '─────────────────────────────────',
+    `$${stats.totalCostUsd.toFixed(4)} total  •  ${stats.messageCount} ${msgWord}  •  ${stats.toolCount} ${toolWord}`,
+    `↑ ${stats.totalInputTokens.toLocaleString()} in  ↓ ${stats.totalOutputTokens.toLocaleString()} out`,
+  ].join('\n')
 }

@@ -1,6 +1,7 @@
 import { callLLM } from '../providers/router'
 import type { StageName, StageConfig, StageResult, RunResult } from './types'
 import { db } from '../db/client'
+import { bumpSessionCost, ensureSession } from '../db/sessions'
 
 const STAGE_DEFAULTS: Record<StageName, StageConfig> = {
   classify: {
@@ -25,18 +26,21 @@ const STAGE_DEFAULTS: Record<StageName, StageConfig> = {
   },
 }
 
+export type StageInput = string | Array<{ role: 'user' | 'assistant'; content: string }>
+
 export async function runStage(
   stage: StageName,
-  prompt: string,
+  input: StageInput,
   sessionId: string | null,
   overrides: Partial<StageConfig> = {}
 ): Promise<StageResult> {
   const config: StageConfig = { ...STAGE_DEFAULTS[stage], ...overrides }
+  const messages = typeof input === 'string' ? [{ role: 'user' as const, content: input }] : input
 
   const result = await callLLM({
     model: config.model,
     system: config.systemPrompt,
-    messages: [{ role: 'user', content: prompt }],
+    messages,
     maxTokens: config.maxOutputTokens,
   })
 
@@ -51,11 +55,13 @@ export async function runStage(
   }
 
   if (sessionId) {
-    db.run(
-      `INSERT OR IGNORE INTO sessions (id, created_at, total_cost_usd) VALUES (?, ?, 0)`,
-      [sessionId, Date.now()]
-    )
+    ensureSession(sessionId)
+    bumpSessionCost(sessionId, result.costUsd)
   }
+
+  const promptPreview = typeof input === 'string'
+    ? input.slice(0, 300)
+    : (messages.at(-1)?.content ?? '').slice(0, 300)
 
   db.run(
     `INSERT INTO events (session_id, type, model, input_tokens, output_tokens, cost_usd, latency_ms, payload, output)
@@ -68,7 +74,7 @@ export async function runStage(
       result.outputTokens,
       result.costUsd,
       result.latencyMs,
-      JSON.stringify({ prompt: prompt.slice(0, 300) }),
+      JSON.stringify({ prompt: promptPreview }),
       result.text,
     ]
   )
@@ -102,7 +108,6 @@ export async function runPipeline(
   for (const stage of stages) {
     const result = await runStage(stage, context, sessionId)
     results.push(result)
-    // Each stage's output becomes input context for the next
     context = `${prompt}\n\n[${stage.toUpperCase()} OUTPUT]\n${result.text}`
   }
 

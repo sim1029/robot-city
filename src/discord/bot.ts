@@ -1,5 +1,5 @@
 import { Client, Events, GatewayIntentBits, ChannelType } from 'discord.js'
-import { handleApprovalInteraction, handleThreadMessage } from './handlers'
+import { handleApprovalInteraction, handleThreadArchive, handleThreadMessage } from './handlers'
 
 export interface BotHandle {
   client: Client
@@ -33,11 +33,23 @@ export async function startBot(): Promise<BotHandle> {
       await handleThreadMessage({
         threadId: msg.channelId,
         userId: msg.author.id,
+        messageId: msg.id,
         content: msg.content,
       })
     } catch (err) {
       console.error('handleThreadMessage error', err)
       await msg.reply(`Error: ${err instanceof Error ? err.message : String(err)}`)
+    }
+  })
+
+  client.on(Events.ThreadUpdate, async (oldThread, newThread) => {
+    if (oldThread.archived || !newThread.archived) return
+    const parent = newThread.parent
+    if (!parent || parent.name !== 'robot-city') return
+    try {
+      await handleThreadArchive({ threadId: newThread.id })
+    } catch (err) {
+      console.error('handleThreadArchive error', err)
     }
   })
 
