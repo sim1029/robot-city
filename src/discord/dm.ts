@@ -1,3 +1,5 @@
+import { getApproval, setApprovalDiscordMessage } from '../approvals/state'
+import { buildApprovalCardPayload } from './approval_card'
 import type { DiscordMessagePayload } from './approval_card'
 
 const DISCORD_API = 'https://discord.com/api/v10'
@@ -50,4 +52,19 @@ export async function sendThreadMessage(threadId: string, content: string): Prom
   if (!res.ok) throw new Error(`Discord thread message ${res.status}: ${await res.text()}`)
   const msg = await res.json() as { id: string }
   return msg.id
+}
+
+export async function sendApprovalCardForApproval(approvalId: string, discordUserId: string): Promise<void> {
+  const approval = getApproval(approvalId)
+  if (!approval) throw new Error(`Approval ${approvalId} not found`)
+  const payload = buildApprovalCardPayload(approval)
+  const ref = await sendDm(discordUserId, payload)
+  setApprovalDiscordMessage(approvalId, ref.messageId)
+}
+
+export async function sendTypingIndicator(channelId: string): Promise<void> {
+  await fetch(`${DISCORD_API}/channels/${channelId}/typing`, {
+    method: 'POST',
+    headers: authHeaders(),
+  }).catch(() => {})
 }

@@ -27,12 +27,14 @@ src/
   gmail/                # oauth.ts, tokens.ts (refresh + storage), client.ts (REST + RFC 822),
                         #   poll.ts (history-watermark loop, GmailHistoryGoneError recovery),
                         #   triage_loop.ts (poll → triage → DM → approval glue)
-  workflows/            # inbox_triage.ts (classify → reason → draft, persists workflow:triage event)
+  calendar/             # client.ts: listEvents, createEvent, patchAttendees (Google Calendar REST)
+  workflows/            # inbox_triage.ts, morning_brief.ts (generates DM brief from calendar + email)
   approvals/            # state.ts: pending_approvals state machine + handler registry
-  tools/                # send_email.ts (creates approval; handler dispatch on approve)
+  tools/                # send_email, create_calendar_event (no approval), invite_attendees, read_calendar
   providers/            # router.ts + per-provider clients (anthropic, openai, google)
-  stages/               # runner.ts (the pipeline) + types.ts
-  db/                   # schema.ts + client.ts (bun:sqlite)
+  stages/               # runner.ts, gather.ts (code-only data fetch), act_dispatcher.ts, types.ts
+  db/                   # schema.ts + client.ts (bun:sqlite) + settings.ts (user_settings KV helpers)
+  cron/                 # scheduler.ts: setInterval tick for morning/midday/evening briefs
   vault/                # encrypted BYOK key storage
 tests/                  # bun test suites; tests/_helpers/fetch-mock.ts stubs HTTP globally
 data/                   # SQLite files (gitignored)
@@ -46,9 +48,11 @@ docs/SPEC.md            # product spec — source of truth for *what* to build
 |--------------------|---------------------|
 | Dev server (watch) | `bun run dev`       |
 | Start              | `bun run start`     |
-| Test               | `bun test`          |
+| Test               | `npm run test`      |
 | Typecheck          | `bunx tsc --noEmit` |
 | Init Discord       | `bun run init`      |
+
+NEVER use bun run test, the npm run test stage has important variables that it sets to that the local sqlite file is not overwritten
 
 Tests live under `tests/` and use `bun test`. Stub HTTP via `installFetchMock()` from `tests/_helpers/fetch-mock.ts` — never let a unit test hit a real provider.
 
@@ -75,6 +79,10 @@ Tests live under `tests/` and use `bun test`. Stub HTTP via `installFetchMock()`
 
 - **M1 Gmail trigger = polling, not push.** Pub/Sub deferred to M4. History-gone (404) is recovered by re-baselining + skipping the gap and logging `gmail:gap`.
 - **Discord live bot ships in M1.** `discord.js` `Client` boots from `src/index.ts` whenever `DISCORD_BOT_TOKEN` is set. Pure handler logic lives in `src/discord/handlers.ts` so it can be tested without a gateway connection.
+- **M2 interactive pipeline = classify → gather (code) → reason → act.** Gather is a pure TS function (no LLM cost) that fetches calendar/email data based on the classify label. Act outputs JSON and is dispatched by `src/stages/act_dispatcher.ts`.
+- **M2 cron = in-process setInterval (60s tick).** Briefs fire when the current hour in the user's timezone matches the configured hour. State (fired-today set) is in memory; Fly Scheduled Machines deferred to M4+.
+- **Google OAuth scope includes `calendar.events`.** Same OAuth client as Gmail; existing users must re-auth at `/auth/google` to get calendar access. Tokens stored in `gmail_tokens` table.
+- **User settings are a generic KV table (`user_settings`).** Use `getSetting/setSetting` from `src/db/settings.ts`. Managed via `GET/PUT /settings` API; Discord/admin UI management deferred to M5.
 
 ## Personal preferences for working in this repo
 When you are planning out changes with a harnesses "plan mode", make sure to write out your finalized plan ONCE APPROVED to docs/ directory. The .md file name can be long and descriptive I should be able to immedietly tell what the file was used for by the title of it.

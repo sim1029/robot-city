@@ -16,12 +16,12 @@ const STAGE_DEFAULTS: Record<StageName, StageConfig> = {
   reason: {
     model: 'claude-sonnet-4-6',
     maxOutputTokens: 2000,
-    systemPrompt: 'You are a helpful AI life concierge. Think carefully and provide a clear, actionable response.',
+    systemPrompt: "You are an AI life concierge with access to the following tools that execute automatically after your response: create_calendar_event, read_calendar, invite_attendees (requires user approval), send_email (requires user approval). When the user requests a calendar or email action, confirm you will do it — never say you can't access external services. The user's original message appears in context labeled [ORIGINAL MESSAGE]; ignore [CLASSIFY] and [CONTEXT] tags — those are internal pipeline state, not part of the conversation.",
   },
   act: {
     model: 'claude-haiku-4-5-20251001',
     maxOutputTokens: 300,
-    systemPrompt: 'Output a single JSON object describing the action to take. No prose.',
+    systemPrompt: 'Output a single JSON object: {"tool":"<name>","args":{...}}\nAvailable tools:\n- "none": no action needed\n- "create_calendar_event": {"title":string,"start":string (ISO8601),"end":string (ISO8601),"description"?:string,"location"?:string}\n- "invite_attendees": {"eventId":string,"emails":string[],"eventTitle"?:string}\n- "send_email": {"to":string,"subject":string,"body":string}\nOnly output JSON. No prose.',
   },
 }
 
@@ -58,8 +58,8 @@ export async function runStage(
   }
 
   db.run(
-    `INSERT INTO events (session_id, type, model, input_tokens, output_tokens, cost_usd, latency_ms, payload)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO events (session_id, type, model, input_tokens, output_tokens, cost_usd, latency_ms, payload, output)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       sessionId,
       `stage:${stage}`,
@@ -69,6 +69,7 @@ export async function runStage(
       result.costUsd,
       result.latencyMs,
       JSON.stringify({ prompt: prompt.slice(0, 300) }),
+      result.text,
     ]
   )
 

@@ -106,13 +106,15 @@ describe('discord handlers', () => {
   })
 
   test('handleThreadMessage runs pipeline and replies in thread with footer', async () => {
+    // classify
     mockFetch('https://api.anthropic.com/v1/messages', {
       json: {
         model: 'claude-haiku-4-5-20251001',
-        content: [{ text: 'CLASSIFIED' }],
+        content: [{ text: 'CONVERSATION\nGeneral chat.' }],
         usage: { input_tokens: 50, output_tokens: 10 },
       },
     }, { once: true })
+    // reason
     mockFetch('https://api.anthropic.com/v1/messages', {
       json: {
         model: 'claude-sonnet-4-6',
@@ -120,6 +122,16 @@ describe('discord handlers', () => {
         usage: { input_tokens: 80, output_tokens: 20 },
       },
     }, { once: true })
+    // act
+    mockFetch('https://api.anthropic.com/v1/messages', {
+      json: {
+        model: 'claude-haiku-4-5-20251001',
+        content: [{ text: '{"tool":"none"}' }],
+        usage: { input_tokens: 60, output_tokens: 5 },
+      },
+    }, { once: true })
+    // typing indicator (fire-and-forget, may or may not arrive before messages)
+    mockFetch(/channels\/thread-1\/typing$/, { status: 204, json: null })
     mockFetch(/channels\/thread-1\/messages$/, { json: { id: 'reply-1' } })
 
     await handleThreadMessage({

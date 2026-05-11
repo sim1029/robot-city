@@ -2,18 +2,37 @@ import {
   approveApproval,
   getApproval,
   rejectApproval,
-  setApprovalDiscordMessage,
 } from '../approvals/state'
-import { runPipeline } from '../stages/runner'
-import { buildApprovalCardPayload, buildResolvedCardPayload, parseApprovalCustomId } from './approval_card'
-import { editChannelMessage, sendDm, sendThreadMessage } from './dm'
+import { runStage, buildFooter } from '../stages/runner'
+import { gatherForIntent } from '../stages/gather'
+import { dispatchAct } from '../stages/act_dispatcher'
+import { buildResolvedCardPayload, parseApprovalCustomId } from './approval_card'
+import { editChannelMessage, sendApprovalCardForApproval, sendThreadMessage, sendTypingIndicator } from './dm'
+import { getSetting } from '../db/settings'
+import { db } from '../db/client'
 
-export async function sendApprovalCardForApproval(approvalId: string, discordUserId: string): Promise<void> {
-  const approval = getApproval(approvalId)
-  if (!approval) throw new Error(`Approval ${approvalId} not found`)
-  const payload = buildApprovalCardPayload(approval)
-  const ref = await sendDm(discordUserId, payload)
-  setApprovalDiscordMessage(approvalId, ref.messageId)
+export { sendApprovalCardForApproval }
+
+const INTERACTIVE_CLASSIFY_PROMPT = (content: string) =>
+  `Classify the user intent. Output exactly one label on the first line, then one sentence reason.
+Labels: READ_CALENDAR, CREATE_CALENDAR_EVENT, INVITE_ATTENDEES, READ_EMAIL, SEND_EMAIL, CONVERSATION
+
+User message: ${content}`
+
+function currentDateHeader(): string {
+  const timezone = getSetting('timezone', 'UTC')
+  const now = new Date()
+  const formatted = new Intl.DateTimeFormat('en-US', {
+    timeZone: timezone,
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZoneName: 'short',
+  }).format(now)
+  return `[CURRENT DATE AND TIME]\n${formatted}`
 }
 
 export type InteractionOutcome =
@@ -57,8 +76,61 @@ export async function handleThreadMessage(args: {
   content: string
 }): Promise<void> {
   const sessionId = `discord:${args.threadId}`
-  const result = await runPipeline(args.content, sessionId, ['classify', 'reason'])
-  const reasonStage = result.stages.at(-1)
-  const reply = `${reasonStage?.text ?? ''}\n\n${result.footer}`
+
+  await sendTypingIndicator(args.threadId)
+
+  const gmailRow = db
+    .query('SELECT user_id FROM gmail_tokens LIMIT 1')
+    .get() as { user_id: string } | null
+  const gmailUserId = gmailRow?.user_id ?? ''
+
+  const classifyResult = await runStage(
+    'classify',
+    INTERACTIVE_CLASSIFY_PROMPT(args.content),
+    sessionId
+  )
+
+  const gatherData = gmailUserId
+    ? await gatherForIntent(classifyResult.text, gmailUserId).catch(() => '')
+    : ''
+
+  const dateHeader = currentDateHeader()
+
+  const reasonPrompt = [
+    dateHeader,
+    `[ORIGINAL MESSAGE]\n${args.content}`,
+    `[CLASSIFY]\n${classifyResult.text}`,
+    gatherData ? `[CONTEXT]\n${gatherData}` : '',
+  ].filter(Boolean).join('\n\n')
+
+  const reasonResult = await runStage('reason', reasonPrompt, sessionId)
+
+  const actPrompt = [
+    dateHeader,
+    `[ORIGINAL MESSAGE]\n${args.content}`,
+    `[REASON]\n${reasonResult.text}`,
+  ].join('\n\n')
+
+  const actResult = await runStage('act', actPrompt, sessionId)
+
+  let dispatchNote = ''
+  if (gmailUserId) {
+    const dispatch = await dispatchAct(actResult.text, {
+      gmailUserId,
+      discordUserId: args.userId,
+      sessionId,
+    })
+
+    if (dispatch.kind === 'executed') {
+      dispatchNote = `\n\n${dispatch.output}`
+    } else if (dispatch.kind === 'approval_pending') {
+      dispatchNote = '\n\n_Sent you an approval request via DM._'
+    } else if (dispatch.kind === 'error') {
+      dispatchNote = `\n\n_Action failed: ${dispatch.message}_`
+    }
+  }
+
+  const footer = buildFooter([classifyResult, reasonResult, actResult])
+  const reply = `${reasonResult.text}${dispatchNote}\n\n${footer}`
   await sendThreadMessage(args.threadId, reply)
 }

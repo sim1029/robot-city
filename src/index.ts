@@ -5,11 +5,15 @@ import { getKey, setKey } from './vault'
 import { runStage, runPipeline, buildFooter } from './stages/runner'
 import { getOAuthUrl, exchangeCode, getCurrentUser } from './discord/oauth'
 import { getGmailAuthUrl, exchangeGmailCode } from './gmail/oauth'
-import { saveGmailTokens, loadGmailTokens } from './gmail/tokens'
+import { saveGmailTokens } from './gmail/tokens'
 import { getProfile } from './gmail/client'
 import { runTriageTick } from './gmail/triage_loop'
 import { registerSendEmailTool } from './tools/send_email'
+import { registerInviteAttendeesTool } from './tools/invite_attendees'
 import { startBot } from './discord/bot'
+import { startScheduler } from './cron/scheduler'
+import { generateBrief } from './workflows/morning_brief'
+import { getAllSettings, getSetting, setSetting } from './db/settings'
 import type { StageName } from './stages/types'
 
 migrate()
@@ -22,12 +26,11 @@ app.get('/health', (c) => c.json({ status: 'ok', ts: Date.now() }))
 
 // ── Discord OAuth ─────────────────────────────────────────────────────────────
 
-// Ephemeral CSRF state map (single-user; in-memory is fine)
 const oauthStates = new Map<string, number>()
 
 app.get('/auth/discord', (c) => {
   const state = crypto.randomUUID()
-  oauthStates.set(state, Date.now() + 10 * 60 * 1000) // 10 min TTL
+  oauthStates.set(state, Date.now() + 10 * 60 * 1000)
   return c.redirect(getOAuthUrl(state))
 })
 
@@ -63,7 +66,7 @@ app.get('/auth/discord/callback', async (c) => {
   }
 })
 
-// ── Gmail OAuth ───────────────────────────────────────────────────────────────
+// ── Gmail + Calendar OAuth ────────────────────────────────────────────────────
 
 const gmailOauthStates = new Map<string, number>()
 
@@ -94,6 +97,7 @@ app.get('/auth/google/callback', async (c) => {
       history_id: profile.historyId,
     })
     registerSendEmailTool(profile.emailAddress)
+    registerInviteAttendeesTool(profile.emailAddress)
     return c.json({ ok: true, email: profile.emailAddress })
   } catch (err) {
     return c.json({ error: String(err) }, 500)
@@ -111,6 +115,40 @@ app.post('/gmail/poll', async (c) => {
       discordUserId: body.discord_user_id,
     })
     return c.json(result)
+  } catch (err) {
+    return c.json({ error: String(err) }, 500)
+  }
+})
+
+// ── User Settings ─────────────────────────────────────────────────────────────
+
+app.get('/settings', (c) => c.json(getAllSettings()))
+
+app.put('/settings/:key', async (c) => {
+  const key = c.req.param('key')
+  const body = await c.req.json<{ value?: string }>()
+  if (!body.value && body.value !== '') return c.json({ error: 'Missing "value"' }, 400)
+  setSetting(key, body.value)
+  return c.json({ ok: true, key, value: body.value })
+})
+
+// ── Cron brief (manual trigger for testing) ───────────────────────────────────
+
+app.post('/cron/brief', async (c) => {
+  const gmailRow = db.query('SELECT user_id FROM gmail_tokens LIMIT 1').get() as { user_id: string } | null
+  const discordRow = db.query('SELECT user_id FROM discord_tokens LIMIT 1').get() as { user_id: string } | null
+
+  if (!gmailRow || !discordRow) {
+    return c.json({ error: 'Gmail and Discord accounts must be connected first' }, 400)
+  }
+
+  const rawBody = await c.req.json().catch(() => ({})) as Record<string, unknown>
+  const labelArg = String(rawBody.label ?? '')
+  const label = (['morning', 'midday', 'evening'].includes(labelArg) ? labelArg : 'morning') as 'morning' | 'midday' | 'evening'
+
+  try {
+    await generateBrief({ gmailUserId: gmailRow.user_id, discordUserId: discordRow.user_id, label })
+    return c.json({ ok: true, label })
   } catch (err) {
     return c.json({ error: String(err) }, 500)
   }
@@ -188,13 +226,24 @@ app.get('/events', (c) => {
 
 // ── Server ────────────────────────────────────────────────────────────────────
 
-// Restore send_email handler for any Gmail account already onboarded
+// Restore tool handlers for any Gmail account already onboarded
 for (const row of db.query('SELECT user_id FROM gmail_tokens').all() as Array<{ user_id: string }>) {
   registerSendEmailTool(row.user_id)
+  registerInviteAttendeesTool(row.user_id)
 }
 
 if (process.env.DISCORD_BOT_TOKEN) {
-  startBot().catch((err) => console.error('Discord bot failed to start:', err))
+  startBot()
+    .then(() => {
+      // Start daily brief scheduler once bot is live
+      const gmailRow = db.query('SELECT user_id FROM gmail_tokens LIMIT 1').get() as { user_id: string } | null
+      const discordRow = db.query('SELECT user_id FROM discord_tokens LIMIT 1').get() as { user_id: string } | null
+      if (gmailRow && discordRow) {
+        startScheduler({ gmailUserId: gmailRow.user_id, discordUserId: discordRow.user_id })
+        console.log(`[cron] Scheduler started for ${gmailRow.user_id} (timezone: ${getSetting('timezone', 'UTC')})`)
+      }
+    })
+    .catch((err) => console.error('Discord bot failed to start:', err))
 }
 
 const port = Number(process.env.PORT ?? 3000)

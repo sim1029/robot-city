@@ -74,4 +74,28 @@ export function migrate() {
       FOREIGN KEY (session_id) REFERENCES sessions(id)
     )
   `)
+
+  // Additive migration — safe to run against existing DB
+  try { db.run('ALTER TABLE events ADD COLUMN output TEXT') } catch { /* already exists */ }
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS user_settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+    )
+  `)
+
+  const settingDefaults: Record<string, string> = {
+    brief_morning_enabled: 'true',
+    brief_morning_hour: '8',
+    brief_midday_enabled: 'false',
+    brief_midday_hour: '12',
+    brief_evening_enabled: 'false',
+    brief_evening_hour: '18',
+    timezone: 'UTC',
+  }
+  for (const [key, value] of Object.entries(settingDefaults)) {
+    db.run(`INSERT OR IGNORE INTO user_settings (key, value) VALUES (?, ?)`, [key, value])
+  }
 }
