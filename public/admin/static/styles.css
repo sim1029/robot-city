@@ -360,3 +360,21 @@ a.btn-primary:hover {
 .login-card h1 { margin: 0 0 8px; color: var(--fg); }
 .login-card p { color: var(--fg-muted); margin-bottom: 24px; }
 .login-card .btn-primary { display: inline-block; padding: 12px 24px; text-decoration: none; border-radius: 6px; }
+
+.btn-sm { padding: 3px 8px; font-size: 12px; }
+
+input[type="search"] {
+  background: var(--bg-elev);
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  color: var(--fg);
+  padding: 8px 12px;
+  font-size: 14px;
+  font-family: inherit;
+  outline: none;
+}
+input[type="search"]:focus { border-color: var(--sky); }
+
+@media (max-width: 640px) {
+  .contacts-hide-mobile { display: none; }
+}
