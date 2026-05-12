@@ -1,9 +1,12 @@
-export type StageName = 'classify' | 'gather' | 'reason' | 'act'
+import type { ToolCall, ToolDefinition } from '../providers/types'
+
+export type StageName = 'classify' | 'gather' | 'reason'
 
 export interface StageConfig {
   model: string
   maxOutputTokens: number
   systemPrompt?: string
+  tools?: ToolDefinition[]
 }
 
 export interface StageResult {
@@ -14,6 +17,7 @@ export interface StageResult {
   model: string
   costUsd: number
   latencyMs: number
+  toolCalls?: ToolCall[]
 }
 
 export interface RunResult {

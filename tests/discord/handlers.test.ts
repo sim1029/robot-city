@@ -26,6 +26,7 @@ describe('discord handlers', () => {
     db.run('DELETE FROM pending_approvals')
     db.run('DELETE FROM events')
     db.run('DELETE FROM sessions')
+    db.run('DELETE FROM gmail_tokens')
     resetApprovalHandlersForTest()
   })
   afterEach(() => resetFetchMock())
@@ -178,24 +179,18 @@ describe('discord handlers', () => {
     mockFetch('https://api.anthropic.com/v1/messages', {
       json: {
         model: 'claude-haiku-4-5-20251001',
-        content: [{ text: 'CONVERSATION\nGeneral chat.' }],
+        content: [{ type: 'text', text: 'CONVERSATION\nGeneral chat.' }],
+        stop_reason: 'end_turn',
         usage: { input_tokens: 50, output_tokens: 10 },
       },
     }, { once: true })
-    // reason
+    // reason — no tool_use blocks → loop exits after one iteration
     mockFetch('https://api.anthropic.com/v1/messages', {
       json: {
         model: 'claude-sonnet-4-6',
-        content: [{ text: 'Here is the answer.' }],
+        content: [{ type: 'text', text: 'Here is the answer.' }],
+        stop_reason: 'end_turn',
         usage: { input_tokens: 80, output_tokens: 20 },
-      },
-    }, { once: true })
-    // act
-    mockFetch('https://api.anthropic.com/v1/messages', {
-      json: {
-        model: 'claude-haiku-4-5-20251001',
-        content: [{ text: '{"tool":"none"}' }],
-        usage: { input_tokens: 60, output_tokens: 5 },
       },
     }, { once: true })
     // thread history fetch (no prior history for this turn)
@@ -220,13 +215,10 @@ describe('discord handlers', () => {
 
   test('handleThreadMessage footer includes "session $X.XXXX" totals', async () => {
     mockFetch('https://api.anthropic.com/v1/messages', {
-      json: { model: 'claude-haiku-4-5-20251001', content: [{ text: 'CONVERSATION\nchat' }], usage: { input_tokens: 50, output_tokens: 10 } },
+      json: { model: 'claude-haiku-4-5-20251001', content: [{ type: 'text', text: 'CONVERSATION\nchat' }], stop_reason: 'end_turn', usage: { input_tokens: 50, output_tokens: 10 } },
     }, { once: true })
     mockFetch('https://api.anthropic.com/v1/messages', {
-      json: { model: 'claude-sonnet-4-6', content: [{ text: 'Answer.' }], usage: { input_tokens: 80, output_tokens: 20 } },
-    }, { once: true })
-    mockFetch('https://api.anthropic.com/v1/messages', {
-      json: { model: 'claude-haiku-4-5-20251001', content: [{ text: '{"tool":"none"}' }], usage: { input_tokens: 60, output_tokens: 5 } },
+      json: { model: 'claude-sonnet-4-6', content: [{ type: 'text', text: 'Answer.' }], stop_reason: 'end_turn', usage: { input_tokens: 80, output_tokens: 20 } },
     }, { once: true })
     mockFetch(/channels\/thread-2\/messages\?/, { json: [] })
     mockFetch(/channels\/thread-2\/typing$/, { status: 204, json: null })
@@ -251,21 +243,16 @@ describe('discord handlers', () => {
     }, { once: true })
 
     // capture the reason stage request body to assert on it
-    let reasonBody: { system?: string; messages: Array<{ role: string; content: string }> } | null = null
+    let reasonBody: { system?: string; messages: Array<{ role: string; content: unknown }> } | null = null
     mockFetch((req) => {
       if (req.url !== 'https://api.anthropic.com/v1/messages') return false
       const parsed = req.bodyJson() as { model: string }
       return parsed.model === 'claude-sonnet-4-6'
     }, async (req) => {
-      reasonBody = req.bodyJson() as { system?: string; messages: Array<{ role: string; content: string }> }
+      reasonBody = req.bodyJson() as { system?: string; messages: Array<{ role: string; content: unknown }> }
       return {
-        json: { model: 'claude-sonnet-4-6', content: [{ text: 'Got it.' }], usage: { input_tokens: 200, output_tokens: 30 } },
+        json: { model: 'claude-sonnet-4-6', content: [{ type: 'text', text: 'Got it.' }], stop_reason: 'end_turn', usage: { input_tokens: 200, output_tokens: 30 } },
       }
-    }, { once: true })
-
-    // act
-    mockFetch('https://api.anthropic.com/v1/messages', {
-      json: { model: 'claude-haiku-4-5-20251001', content: [{ text: '{"tool":"none"}' }], usage: { input_tokens: 60, output_tokens: 5 } },
     }, { once: true })
 
     // Thread history: two prior user msgs + one assistant reply (with footer to be stripped)
@@ -298,24 +285,98 @@ describe('discord handlers', () => {
 
     expect(reasonBody).not.toBeNull()
     const messages = reasonBody!.messages
+    const strContent = (m: { content: unknown }) => typeof m.content === 'string' ? m.content : JSON.stringify(m.content)
     // Expect alternating history followed by the latest user turn
     expect(messages.length).toBeGreaterThanOrEqual(4)
     // Earliest is user
     expect(messages[0].role).toBe('user')
-    expect(messages[0].content).toContain('Schedule a meeting.')
+    expect(strContent(messages[0])).toContain('Schedule a meeting.')
     // Middle has the previous user msg + assistant reply (footer stripped)
-    expect(messages.some(m => m.role === 'user' && m.content.includes('What about Tuesday?'))).toBe(true)
+    expect(messages.some(m => m.role === 'user' && strContent(m).includes('What about Tuesday?'))).toBe(true)
     const assistantMsg = messages.find(m => m.role === 'assistant')
     expect(assistantMsg).toBeDefined()
-    expect(assistantMsg!.content).toContain('Sure, here is the plan.')
-    expect(assistantMsg!.content).not.toContain('session $')
-    expect(assistantMsg!.content).not.toContain('─')
+    expect(strContent(assistantMsg!)).toContain('Sure, here is the plan.')
+    expect(strContent(assistantMsg!)).not.toContain('session $')
+    expect(strContent(assistantMsg!)).not.toContain('─')
     // Last user message in the conversation is the new prompt
     const lastUser = [...messages].reverse().find(m => m.role === 'user')!
-    expect(lastUser.content).toContain('Make it Wednesday.')
+    expect(strContent(lastUser)).toContain('Make it Wednesday.')
 
     // Discord fetch should have used `before` so the current message is not in history
     const historyCall = fetchCalls().find(c => c.method === 'GET' && c.url.includes('/channels/thread-9/messages'))!
     expect(historyCall.url).toContain('before=msg-current')
+  })
+
+  test('handleThreadMessage executes tool natively and feeds tool_result into second reason iteration', async () => {
+    // Provide a gmail_tokens row so gmailUserId is set and FORUM_TOOLS are passed to reason
+    db.run(
+      `INSERT INTO gmail_tokens (user_id, access_token, refresh_token, expires_at, scope) VALUES ('u1', 'tok', 'ref', 9999999999, 'email')`
+    )
+
+    // classify
+    mockFetch('https://api.anthropic.com/v1/messages', {
+      json: { model: 'claude-haiku-4-5-20251001', content: [{ type: 'text', text: 'READ_EMAIL\nUser wants email summary.' }], stop_reason: 'end_turn', usage: { input_tokens: 50, output_tokens: 10 } },
+    }, { once: true })
+
+    // first reason — returns tool_use block requesting read_email
+    mockFetch('https://api.anthropic.com/v1/messages', {
+      json: {
+        model: 'claude-sonnet-4-6',
+        content: [
+          { type: 'text', text: 'Let me check your emails.' },
+          { type: 'tool_use', id: 'tu_001', name: 'read_email', input: {} },
+        ],
+        stop_reason: 'tool_use',
+        usage: { input_tokens: 80, output_tokens: 25 },
+      },
+    }, { once: true })
+
+    // second reason — receives tool_result, returns final response with no tool calls
+    let secondReasonMessages: Array<{ role: string; content: unknown }> | null = null
+    mockFetch(
+      (req) => {
+        if (req.url !== 'https://api.anthropic.com/v1/messages') return false
+        return (req.bodyJson() as { model: string }).model === 'claude-sonnet-4-6'
+      },
+      async (req) => {
+        secondReasonMessages = (req.bodyJson() as { messages: Array<{ role: string; content: unknown }> }).messages
+        return { json: { model: 'claude-sonnet-4-6', content: [{ type: 'text', text: 'You have no recent emails.' }], stop_reason: 'end_turn', usage: { input_tokens: 200, output_tokens: 30 } } }
+      },
+      { once: true }
+    )
+
+    mockFetch(/channels\/thread-loop\/messages\?/, { json: [] })
+    mockFetch(/channels\/thread-loop\/typing$/, { status: 204, json: null })
+    mockFetch(/channels\/thread-loop\/messages$/, { json: { id: 'reply-loop' } })
+
+    await handleThreadMessage({
+      threadId: 'thread-loop',
+      userId: 'discord-user-1',
+      messageId: 'msg-loop',
+      content: 'Show me my recent emails.',
+    })
+
+    expect(secondReasonMessages).not.toBeNull()
+
+    // The assistant's first turn should be an array with text + tool_use blocks
+    const assistantTurn = secondReasonMessages!.find(m => m.role === 'assistant' && Array.isArray(m.content))
+    expect(assistantTurn).toBeDefined()
+    const assistantBlocks = assistantTurn!.content as Array<{ type: string; name?: string }>
+    expect(assistantBlocks.some(b => b.type === 'tool_use' && b.name === 'read_email')).toBe(true)
+
+    // The tool_result user message should contain the read_email output
+    const toolResultTurn = secondReasonMessages!.find(m =>
+      m.role === 'user' && Array.isArray(m.content) &&
+      (m.content as Array<{ type: string }>).some(b => b.type === 'tool_result')
+    )
+    expect(toolResultTurn).toBeDefined()
+    const resultBlocks = toolResultTurn!.content as Array<{ type: string; content?: string }>
+    expect(resultBlocks.find(b => b.type === 'tool_result')?.content).toContain('No emails triaged')
+
+    // Final reply should use the SECOND reason text only
+    const replyCall = fetchCalls().find(c => c.method === 'POST' && c.url.endsWith('/thread-loop/messages'))!
+    const body = replyCall.bodyJson() as { content: string }
+    expect(body.content).toContain('You have no recent emails.')
+    expect(body.content).not.toContain('Let me check your emails.')
   })
 })

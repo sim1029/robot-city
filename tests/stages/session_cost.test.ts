@@ -46,7 +46,7 @@ describe('session cost accumulation', () => {
     mockAnthropicHaiku('a', false)
     await runStage('classify', 'first', 'sess-B')
     await runStage('gather', 'second', 'sess-B')
-    await runStage('act', 'third', 'sess-B')
+    await runStage('reason', 'third', 'sess-B')
 
     const total = getSessionCost('sess-B')
     expect(total).toBeCloseTo(EXPECTED_COST_PER_CALL * 3, 8)
@@ -84,6 +84,15 @@ describe('session cost accumulation', () => {
     expect(footer).toContain('session $0.0182')
     expect(footer).toContain('$0.0041')
     expect(footer).toContain('claude-sonnet-4-6')
+  })
+
+  test('buildFooter shows highest-tier model across stages, not last stage model', () => {
+    const haiku: StageResult = { stage: 'classify', text: '', inputTokens: 10, outputTokens: 5, model: 'claude-haiku-4-5-20251001', costUsd: 0.0001, latencyMs: 100 }
+    const sonnet: StageResult = { stage: 'reason', text: '', inputTokens: 500, outputTokens: 200, model: 'claude-sonnet-4-6', costUsd: 0.004, latencyMs: 1000 }
+    const haikuAct: StageResult = { stage: 'gather', text: '', inputTokens: 10, outputTokens: 5, model: 'claude-haiku-4-5-20251001', costUsd: 0.0001, latencyMs: 100 }
+    const footer = buildFooter([haiku, sonnet, haikuAct], 0.02)
+    expect(footer).toContain('claude-sonnet-4-6')
+    expect(footer).not.toContain('haiku')
   })
 
   test('buildFooter without sessionCostUsd omits the session segment', () => {

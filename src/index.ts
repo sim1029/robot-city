@@ -212,7 +212,7 @@ app.get('/vault/keys/:provider', async (c) => {
 
 // ── Stage runner ──────────────────────────────────────────────────────────────
 
-const VALID_STAGES: StageName[] = ['classify', 'gather', 'reason', 'act']
+const VALID_STAGES: StageName[] = ['classify', 'gather', 'reason']
 
 app.post('/stages/run', async (c) => {
   const body = await c.req.json<{ stage?: string; prompt?: string; session_id?: string }>()
