@@ -87,6 +87,13 @@ Tests live under `tests/` and use `bun test`. Stub HTTP via `installFetchMock()`
 - **Gmail history-gone recovery:** `pollGmail` re-baselines from `users.getProfile().historyId` on a 404 from `users.history.list` (Gmail drops history >7d). The gap is intentionally skipped and logged as `gmail:gap`. Don't try to backfill — use `messages.list` with a label filter if you need that later.
 - **The 5 tools are the product.** Don't add tools casually — `SPEC.md` §"The 5 tools" is the contract.
 
+## Admin UI conventions
+
+- **Mobile is first-class.** Every admin UI change must work on a 375px viewport (iPhone). New pages/components must be tested mentally at mobile width before shipping. Use the existing 640px breakpoint in `styles.css` for mobile overrides — extend it, don't add new ad-hoc breakpoints.
+- Hamburger nav is already wired in `Layout.tsx` + `styles.css`. No nav changes needed for new pages.
+- Hide non-essential table columns on mobile via `.events-table th:nth-child(N), .events-table td:nth-child(N) { display: none; }` — never let a table cause horizontal body scroll.
+- `html, body { overflow-x: hidden; }` is set globally. Don't remove it.
+
 ## Things to NOT do
 
 - Don't add an agent framework or LLM abstraction layer.
