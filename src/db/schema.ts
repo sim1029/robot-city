@@ -153,6 +153,8 @@ export function migrate() {
     brief_evening_enabled: 'false',
     brief_evening_hour: '18',
     timezone: 'UTC',
+    db_backup_enabled: 'true',
+    db_backup_hour: '3',
   }
   for (const [key, value] of Object.entries(settingDefaults)) {
     db.run(`INSERT OR IGNORE INTO user_settings (key, value) VALUES (?, ?)`, [key, value])
