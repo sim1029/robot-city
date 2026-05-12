@@ -1,7 +1,10 @@
 import { Hono } from 'hono'
 import { db } from '../db/client'
 import { Layout } from './components/Layout'
-import { renderPage } from './render'
+import { renderPage, renderFragment } from './render'
+
+const PAGE_SIZE = 25
+const COLUMN_COUNT = 9
 
 interface EventRow {
   id: number
@@ -12,6 +15,8 @@ interface EventRow {
   output_tokens: number | null
   cost_usd: number | null
   latency_ms: number | null
+  payload: string | null
+  output: string | null
   created_at: number
 }
 
@@ -34,6 +39,19 @@ function fmtAgo(unix: number): string {
   return `${Math.floor(diff / 86400)}d ago`
 }
 
+function formatPayload(payload: string | null): string {
+  if (!payload) return ''
+  try {
+    const obj = JSON.parse(payload)
+    if (obj && typeof obj === 'object' && 'prompt' in obj && typeof (obj as { prompt: unknown }).prompt === 'string') {
+      return (obj as { prompt: string }).prompt
+    }
+    return JSON.stringify(obj, null, 2)
+  } catch {
+    return payload
+  }
+}
+
 interface StatCardProps {
   label: string
   totals: CostTotals
@@ -51,37 +69,88 @@ function StatCard({ label, totals }: StatCardProps) {
   )
 }
 
-function EventsTable({ rows }: { rows: EventRow[] }) {
-  if (rows.length === 0) {
-    return (
-      <div className="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>When</th>
-              <th>Type</th>
-              <th>Model</th>
-              <th>In</th>
-              <th>Out</th>
-              <th>Cost</th>
-              <th>Latency</th>
-              <th>Session</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td colSpan={8} className="muted">No events yet.</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    )
-  }
+function EventDetailRow({ row }: { row: EventRow }) {
+  const input = formatPayload(row.payload)
+  const output = row.output
+  const isStage = row.type.startsWith('stage:') || row.type.startsWith('workflow:')
+  const inputHint = isStage ? '300-char preview · full prompts are not logged' : 'event payload'
+  return (
+    <tr id={`event-detail-${row.id}`} className="event-detail">
+      <td colSpan={COLUMN_COUNT}>
+        <div className="event-detail-inner">
+          <div className="event-detail-section">
+            <div className="event-detail-label">
+              Input <span className="event-detail-hint">{inputHint}</span>
+            </div>
+            {input
+              ? <pre>{input}</pre>
+              : <pre className="muted">(empty)</pre>}
+          </div>
+          <div className="event-detail-section">
+            <div className="event-detail-label">Response</div>
+            {output
+              ? <pre>{output}</pre>
+              : <pre className="muted">(no model response)</pre>}
+          </div>
+        </div>
+      </td>
+    </tr>
+  )
+}
+
+function EventRowPair({ row }: { row: EventRow }) {
+  return (
+    <>
+      <tr className="event-row" data-detail-id={`event-detail-${row.id}`}>
+        <td className="caret-cell"><span className="caret">▸</span></td>
+        <td>{fmtAgo(row.created_at)}</td>
+        <td>{row.type}</td>
+        <td>{row.model ?? '—'}</td>
+        <td className="num">{row.input_tokens ?? '—'}</td>
+        <td className="num">{row.output_tokens ?? '—'}</td>
+        <td className="num">{row.cost_usd != null ? fmtUsd(row.cost_usd) : '—'}</td>
+        <td className="num">{row.latency_ms != null ? `${row.latency_ms}ms` : '—'}</td>
+        <td className="muted">{row.session_id ?? '—'}</td>
+      </tr>
+      <EventDetailRow row={row} />
+    </>
+  )
+}
+
+function LoadMoreRow({ nextOffset }: { nextOffset: number }) {
+  return (
+    <tr id="load-more-row">
+      <td colSpan={COLUMN_COUNT} className="load-more-cell">
+        <button
+          type="button"
+          className="btn-primary"
+          hx-get={`/admin/events?offset=${nextOffset}`}
+          hx-target="#load-more-row"
+          hx-swap="outerHTML"
+        >
+          Load more
+        </button>
+      </td>
+    </tr>
+  )
+}
+
+function EventRowsFragment({ rows, nextOffset }: { rows: EventRow[]; nextOffset: number | null }) {
+  return (
+    <>
+      {rows.map((r) => <EventRowPair key={r.id} row={r} />)}
+      {nextOffset != null && <LoadMoreRow nextOffset={nextOffset} />}
+    </>
+  )
+}
+
+function EventsTable({ rows, nextOffset }: { rows: EventRow[]; nextOffset: number | null }) {
   return (
     <div className="table-wrap">
-      <table>
+      <table className="events-table">
         <thead>
           <tr>
+            <th aria-label="expand" />
             <th>When</th>
             <th>Type</th>
             <th>Model</th>
@@ -93,32 +162,44 @@ function EventsTable({ rows }: { rows: EventRow[] }) {
           </tr>
         </thead>
         <tbody>
-          {rows.map((r) => (
-            <tr key={r.id}>
-              <td>{fmtAgo(r.created_at)}</td>
-              <td>{r.type}</td>
-              <td>{r.model ?? '—'}</td>
-              <td className="num">{r.input_tokens ?? '—'}</td>
-              <td className="num">{r.output_tokens ?? '—'}</td>
-              <td className="num">{r.cost_usd != null ? fmtUsd(r.cost_usd) : '—'}</td>
-              <td className="num">{r.latency_ms != null ? `${r.latency_ms}ms` : '—'}</td>
-              <td className="muted">{r.session_id ?? '—'}</td>
+          {rows.length === 0 ? (
+            <tr>
+              <td colSpan={COLUMN_COUNT} className="muted">No events yet.</td>
             </tr>
-          ))}
+          ) : (
+            <EventRowsFragment rows={rows} nextOffset={nextOffset} />
+          )}
         </tbody>
       </table>
     </div>
   )
 }
 
+const TOGGLE_SCRIPT = `
+  document.addEventListener('click', function (e) {
+    var t = e.target;
+    if (!(t instanceof Element)) return;
+    if (t.closest('button, a, input, select, textarea, label')) return;
+    var row = t.closest('tr.event-row');
+    if (!row) return;
+    var id = row.getAttribute('data-detail-id');
+    if (!id) return;
+    var detail = document.getElementById(id);
+    if (!detail) return;
+    var open = detail.classList.toggle('open');
+    row.classList.toggle('is-open', open);
+  });
+`
+
 interface HomePageProps {
   csrfToken: string
   day: CostTotals
   week: CostTotals
-  recent: EventRow[]
+  rows: EventRow[]
+  nextOffset: number | null
 }
 
-function HomePage({ csrfToken, day, week, recent }: HomePageProps) {
+function HomePage({ csrfToken, day, week, rows, nextOffset }: HomePageProps) {
   return (
     <Layout title="Home" csrfToken={csrfToken} currentPath="/admin">
       <section className="cards">
@@ -126,9 +207,20 @@ function HomePage({ csrfToken, day, week, recent }: HomePageProps) {
         <StatCard label="Last 7d" totals={week} />
       </section>
       <h2>Recent events</h2>
-      <EventsTable rows={recent} />
+      <EventsTable rows={rows} nextOffset={nextOffset} />
+      <script dangerouslySetInnerHTML={{ __html: TOGGLE_SCRIPT }} />
     </Layout>
   )
+}
+
+function fetchEventPage(offset: number): { rows: EventRow[]; nextOffset: number | null } {
+  const fetched = db.query(
+    `SELECT id, session_id, type, model, input_tokens, output_tokens, cost_usd, latency_ms, payload, output, created_at
+     FROM events ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`
+  ).all(PAGE_SIZE + 1, offset) as EventRow[]
+  const rows = fetched.slice(0, PAGE_SIZE)
+  const nextOffset = fetched.length > PAGE_SIZE ? offset + PAGE_SIZE : null
+  return { rows, nextOffset }
 }
 
 export const homeRoutes = new Hono()
@@ -155,10 +247,14 @@ homeRoutes.get('/', (c) => {
      FROM events WHERE created_at >= ?`
   ).get(weekAgo) as CostTotals
 
-  const recent = db.query(
-    `SELECT id, session_id, type, model, input_tokens, output_tokens, cost_usd, latency_ms, created_at
-     FROM events ORDER BY created_at DESC LIMIT 50`
-  ).all() as EventRow[]
+  const { rows, nextOffset } = fetchEventPage(0)
 
-  return c.html(renderPage(<HomePage csrfToken={csrfToken} day={day} week={week} recent={recent} />))
+  return c.html(renderPage(<HomePage csrfToken={csrfToken} day={day} week={week} rows={rows} nextOffset={nextOffset} />))
+})
+
+homeRoutes.get('/events', (c) => {
+  const raw = Number(c.req.query('offset') ?? 0)
+  const offset = Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 0
+  const { rows, nextOffset } = fetchEventPage(offset)
+  return c.html(renderFragment(<EventRowsFragment rows={rows} nextOffset={nextOffset} />))
 })
