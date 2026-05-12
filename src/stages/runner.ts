@@ -82,12 +82,22 @@ export async function runStage(
   return stageResult
 }
 
+const MODEL_TIERS = ['haiku', 'sonnet', 'opus']
+
+function highestTierModel(models: string[]): string {
+  return models.reduce((best, m) => {
+    const mTier = MODEL_TIERS.findIndex(t => m.toLowerCase().includes(t))
+    const bestTier = MODEL_TIERS.findIndex(t => best.toLowerCase().includes(t))
+    return mTier > bestTier ? m : best
+  }, models[0] ?? 'unknown')
+}
+
 export function buildFooter(stages: StageResult[], sessionCostUsd?: number): string {
   const totalIn = stages.reduce((s, r) => s + r.inputTokens, 0)
   const totalOut = stages.reduce((s, r) => s + r.outputTokens, 0)
   const totalMs = stages.reduce((s, r) => s + r.latencyMs, 0)
   const totalCost = stages.reduce((s, r) => s + r.costUsd, 0)
-  const primaryModel = stages.at(-1)?.model ?? 'unknown'
+  const primaryModel = highestTierModel(stages.map(s => s.model))
 
   const lines = [
     '─────────────────────────────────',

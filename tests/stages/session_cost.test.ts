@@ -86,6 +86,15 @@ describe('session cost accumulation', () => {
     expect(footer).toContain('claude-sonnet-4-6')
   })
 
+  test('buildFooter shows highest-tier model across stages, not last stage model', () => {
+    const haiku: StageResult = { stage: 'classify', text: '', inputTokens: 10, outputTokens: 5, model: 'claude-haiku-4-5-20251001', costUsd: 0.0001, latencyMs: 100 }
+    const sonnet: StageResult = { stage: 'reason', text: '', inputTokens: 500, outputTokens: 200, model: 'claude-sonnet-4-6', costUsd: 0.004, latencyMs: 1000 }
+    const haikuAct: StageResult = { stage: 'act', text: '', inputTokens: 10, outputTokens: 5, model: 'claude-haiku-4-5-20251001', costUsd: 0.0001, latencyMs: 100 }
+    const footer = buildFooter([haiku, sonnet, haikuAct], 0.02)
+    expect(footer).toContain('claude-sonnet-4-6')
+    expect(footer).not.toContain('haiku')
+  })
+
   test('buildFooter without sessionCostUsd omits the session segment', () => {
     const stage: StageResult = {
       stage: 'reason',
