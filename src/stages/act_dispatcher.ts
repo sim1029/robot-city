@@ -7,7 +7,6 @@ import { getValidGmailAccessToken } from '../gmail/tokens'
 import { db } from '../db/client'
 
 export type DispatchResult =
-  | { kind: 'none' }
   | { kind: 'executed'; toolName: string; output: string }
   | { kind: 'approval_pending'; approvalId: string }
   | { kind: 'error'; message: string }

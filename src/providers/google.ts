@@ -4,9 +4,11 @@ export async function callGoogle(req: LLMRequest, apiKey: string): Promise<LLMRe
   const start = Date.now()
 
   type GContent = { role: string; parts: Array<{ text: string }> }
+  const toStr = (c: typeof req.messages[0]['content']): string =>
+    typeof c === 'string' ? c : c.filter(b => b.type === 'text').map(b => (b as { type: 'text'; text: string }).text).join('\n')
   const contents: GContent[] = req.messages.map(m => ({
     role: m.role === 'assistant' ? 'model' : 'user',
-    parts: [{ text: m.content }],
+    parts: [{ text: toStr(m.content) }],
   }))
 
   // Inject system prompt as a priming exchange since not all Gemini models
