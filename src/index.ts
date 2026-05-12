@@ -1,5 +1,6 @@
 import { Hono } from 'hono'
 import { serveStatic } from 'hono/bun'
+import { snapshotDb } from './db/snapshot'
 import { migrate } from './db/schema'
 import { db } from './db/client'
 import { getKey, setKey } from './vault'
@@ -22,6 +23,7 @@ import { loginRoutes } from './admin/login_page'
 import { adminRouter } from './admin/router'
 import type { StageName } from './stages/types'
 
+snapshotDb()
 migrate()
 cleanupExpiredSessions()
 

@@ -22,6 +22,7 @@ src/
   index.ts              # Hono entrypoint (also boots discord.js bot if DISCORD_BOT_TOKEN set)
   cli/init.ts           # `robot-city init` Discord auto-setup
   discord/              # OAuth, channel bootstrap, bot.ts (gateway client),
+                        #   forum.ts (env-driven forum-name resolver + cached forum ID),
                         #   handlers.ts (pure thread/interaction logic), dm.ts (REST helpers),
                         #   approval_card.ts (button payloads + custom_id parser),
                         #   history.ts (fetch thread history → multi-turn messages, strip footers)
@@ -36,6 +37,7 @@ src/
   stages/               # runner.ts, gather.ts (code-only data fetch), act_dispatcher.ts, types.ts
   db/                   # schema.ts + client.ts (bun:sqlite) + settings.ts (user_settings KV helpers)
                         #   + sessions.ts (cost accumulator, discord_thread linkage, stats, close)
+                        #   + snapshot.ts (pre-migration backups, last 5 kept under /data/snapshots/)
   cron/                 # scheduler.ts: setInterval tick for morning/midday/evening briefs
   vault/                # encrypted BYOK key storage
   auth/                 # sessions.ts (admin_sessions table helpers),
@@ -49,6 +51,7 @@ docs/SPEC.md            # product spec — source of truth for *what* to build
 .github/workflows/      # deploy.yml: typecheck+test → flyctl deploy on push to main
 Dockerfile              # multi-stage Bun 1.1-slim image; runs `bun src/index.ts`
 fly.toml                # one always-on Machine, volume `robot_city_data` at /data
+                        #   (DB persists across deploys; /data/snapshots/ holds last 5 pre-migration backups)
 .dockerignore           # excludes data/, tests/, docs/, .env*, .git, etc.
 ```
 
@@ -87,6 +90,8 @@ Tests live under `tests/` and use `bun test`. Stub HTTP via `installFetchMock()`
 - Don't introduce build steps (Webpack/Vite/tsc emit). Bun runs TS directly.
 - Don't hardcode prices — read `pricing.json`.
 - Don't log secrets or full email bodies to the event log; redact at the boundary.
+- Don't write destructive schema migrations (drop column, destructive rename). Deprecate first, drop in a later release — otherwise `flyctl releases rollback` will land old code on a new schema and crash.
+- Don't hardcode the forum name `robot-city` in handlers. Filter by `getResolvedForumId()` from `src/discord/forum.ts` — the name is env-driven so local dev and prod can share one bot token while owning separate forums.
 
 ## Key Decision Log
 
@@ -98,6 +103,8 @@ Tests live under `tests/` and use `bun test`. Stub HTTP via `installFetchMock()`
 - **User settings are a generic KV table (`user_settings`).** Use `getSetting/setSetting` from `src/db/settings.ts`. Managed via `GET/PUT /settings` API; Discord/admin UI management deferred to M5.
 - **M3 session UX:** running session $ in every footer; thread archive = session close (stats-only summary, no LLM); `runStage` accepts `string | Array<{role, content}>` so reason stage gets full thread history.
 - **Deploy = Fly.io, one always-on Machine.** GH Actions (`.github/workflows/deploy.yml`) runs typecheck + tests, then `flyctl deploy --remote-only` on push to `main` or `workflow_dispatch`. `auto_stop_machines = "off"` because Gmail polling + cron scheduler are in-process `setInterval` loops. SQLite + vault state live on volume `robot_city_data` mounted at `/data` (`DB_PATH=/data/robot-city.db`). One-time setup (app create, volume create, secrets, `FLY_API_TOKEN` GH secret) documented in `docs/github-actions-fly-deploy-setup.md`.
+- **Single fly app, no ephemeral PR envs.** Agents push PRs against `main`; CI (`pull_request` + `push`) runs typecheck + tests; deploy job is gated to `push`/`workflow_dispatch` so PRs never deploy. Rollback path: `flyctl releases rollback` for code, `cp /data/snapshots/robot-city.db.snapshot.<ts> /data/robot-city.db` + `flyctl machine restart` for data. `snapshotDb()` runs before `migrate()` on every boot and keeps the 5 most recent. Plan: `docs/local-dev-forum-scoping-and-db-snapshots.md`.
+- **Forum scoping is env-driven.** `DISCORD_FORUM_NAME` (default `robot-city`) + optional `DISCORD_GUILD_ID` decide which forum the bot owns. `src/discord/forum.ts` resolves and caches the ID on boot; handlers filter by ID, not name, so local dev (`robot-city-dev`) and prod (`robot-city`) can coexist under one bot token in the same guild.
 - **HTTP routes are owner-only by default.** All `/admin/*`, `/vault/*`, `/settings`, `/cron/*`, `/events`, `/stages/*`, `/gmail/poll`, and `/auth/logout` go through `requireOwner` + `csrf` middleware (`src/auth/middleware.ts`). Public carve-outs: `/health`, `/auth/*` (OAuth callbacks), `/login`, `/admin/static/*`. Login is Discord OAuth `identify` scope at `/auth/discord/login` — separate from the bot-install flow at `/auth/discord` (different scopes, different `DISCORD_LOGIN_REDIRECT_URI`). Owner identity = `OWNER_DISCORD_ID` env var. Sessions live in `admin_sessions` SQLite table; cookie is HttpOnly+Secure+SameSite=Lax, CSRF via double-submit token (`X-CSRF-Token` header vs `rc_csrf` cookie). Design: `docs/admin-dashboard-and-auth-design.md`.
 
 ## Personal preferences for working in this repo

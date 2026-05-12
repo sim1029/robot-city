@@ -7,7 +7,12 @@ export interface ForumChannelResult {
   channelLink: string
 }
 
-export async function getOrCreateForumChannel(guildId: string): Promise<ForumChannelResult> {
+export const DEFAULT_FORUM_NAME = 'robot-city'
+
+export async function getOrCreateForumChannel(
+  guildId: string,
+  forumName: string = DEFAULT_FORUM_NAME,
+): Promise<ForumChannelResult> {
   const botToken = process.env.DISCORD_BOT_TOKEN
   if (!botToken) throw new Error('DISCORD_BOT_TOKEN must be set')
 
@@ -22,7 +27,7 @@ export async function getOrCreateForumChannel(guildId: string): Promise<ForumCha
   }
   const channels = (await listRes.json()) as Array<{ id: string; name: string; type: number }>
 
-  const existing = channels.find(ch => ch.type === GUILD_FORUM && ch.name === 'robot-city')
+  const existing = channels.find(ch => ch.type === GUILD_FORUM && ch.name === forumName)
   if (existing) {
     return {
       guildId,
@@ -35,7 +40,7 @@ export async function getOrCreateForumChannel(guildId: string): Promise<ForumCha
     method: 'POST',
     headers,
     body: JSON.stringify({
-      name: 'robot-city',
+      name: forumName,
       type: GUILD_FORUM,
       topic: 'Your AI concierge — each post is an isolated session.',
     }),
