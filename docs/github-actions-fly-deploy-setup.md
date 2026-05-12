@@ -56,6 +56,7 @@ Two jobs: `verify` (typecheck + tests) gates `deploy` (flyctl).
 5. **Update OAuth redirect URIs** in the providers:
    - Google Cloud Console: add `https://robot-city.fly.dev/auth/google/callback`.
    - Discord Developer Portal → OAuth2 → Redirects: add **both** `https://robot-city.fly.dev/auth/discord/callback` (bot install) and `https://robot-city.fly.dev/auth/discord/login/callback` (dashboard login).
+   - For local admin dashboard login, also add `http://localhost:3000/auth/discord/login/callback` if you run the app on port 3000. If you use a different local port, add that exact port too. Discord requires exact redirect URI matches.
 6. **Mint a Fly API token** for CI: `flyctl tokens create deploy --name github-actions --app robot-city` → copy the token.
 7. **Add to GitHub repo secrets**: Settings → Secrets and variables → Actions → New repository secret → `FLY_API_TOKEN` = (the token from step 6).
 

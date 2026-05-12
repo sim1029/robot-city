@@ -104,6 +104,7 @@ Served via `hono/bun` `serveStatic({ root: './public' })` mounted at `/admin/sta
 In Discord Developer Portal:
 1. Open the existing Discord OAuth app (the one used for the bot).
 2. OAuth2 → Redirects → add `https://robot-city.fly.dev/auth/discord/login/callback` as an additional redirect URI (alongside the existing bot install callback).
+3. For local development, add `http://localhost:3000/auth/discord/login/callback` too. If you run Bun on another port, add that exact localhost URL instead.
 
 In Fly:
 
