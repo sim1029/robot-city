@@ -13,6 +13,7 @@ Self-hosted single-user AI life concierge (Gmail + Calendar) fronted by a Discor
 - **DB:** SQLite via `bun:sqlite` (file at `data/robot-city.db`)
 - **Discord:** `discord.js` v14
 - **LLM clients:** hand-rolled per provider in `src/providers/` — **do not introduce `ai`, `@ai-sdk/*`, LangChain, or similar**
+- **Admin UI:** React 19 server-rendered via `react-dom/server` (`renderToStaticMarkup`). No client React, no hydration, no bundler — Bun transpiles `.tsx` natively. HTMX still drives form interactions.
 - **Deploy target:** Fly.io single Machine
 
 ## Repo map
@@ -42,8 +43,11 @@ src/
   vault/                # encrypted BYOK key storage
   auth/                 # sessions.ts (admin_sessions table helpers),
                         #   middleware.ts (requireOwner + csrf), discord_login.ts (login OAuth flow)
-  admin/                # router.ts + home/settings/vault/actions pages (HTMX + server-rendered HTML)
-public/admin/static/    # styles.css (htmx is loaded via CDN+SRI from layout.ts)
+  admin/                # router.ts + home/settings/vault/actions/login_page (all .tsx, React SSR).
+                        #   components/Layout.tsx (shared chrome), render.tsx (renderPage/renderFragment
+                        #   wrappers around renderToStaticMarkup), htmx.d.ts (hx-* attr typings for JSX).
+                        #   Fragment POST handlers return small React nodes via renderFragment().
+public/admin/static/    # styles.css (htmx is loaded via CDN+SRI from Layout.tsx)
 tests/                  # bun test suites; tests/_helpers/fetch-mock.ts stubs HTTP globally
 data/                   # SQLite files (gitignored)
 pricing.json            # provider:model:tier → $/1M tokens, refreshed monthly

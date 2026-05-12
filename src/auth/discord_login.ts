@@ -1,4 +1,5 @@
 import { Hono } from 'hono'
+import type { Context } from 'hono'
 import { setCookie, deleteCookie, getCookie } from 'hono/cookie'
 import { exchangeCode, getCurrentUser } from '../discord/oauth'
 import { createSession, deleteSession } from './sessions'
@@ -7,18 +8,21 @@ const STATE_TTL_MS = 10 * 60 * 1000
 
 const loginStates = new Map<string, number>()
 
-function getLoginRedirectUri(): string {
+function getLoginRedirectUri(c: Context): string {
   const uri = process.env.DISCORD_LOGIN_REDIRECT_URI
-  if (!uri) throw new Error('DISCORD_LOGIN_REDIRECT_URI must be set')
-  return uri
+  if (uri) return uri
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('DISCORD_LOGIN_REDIRECT_URI must be set in production')
+  }
+  return `${new URL(c.req.url).origin}/auth/discord/login/callback`
 }
 
-function buildLoginAuthUrl(state: string): string {
+function buildLoginAuthUrl(c: Context, state: string): string {
   const clientId = process.env.DISCORD_CLIENT_ID
   if (!clientId) throw new Error('DISCORD_CLIENT_ID must be set')
   const params = new URLSearchParams({
     client_id: clientId,
-    redirect_uri: getLoginRedirectUri(),
+    redirect_uri: getLoginRedirectUri(c),
     response_type: 'code',
     scope: 'identify',
     state,
@@ -37,7 +41,7 @@ authRouter.get('/auth/discord/login', (c) => {
   const state = crypto.randomUUID()
   loginStates.set(state, Date.now() + STATE_TTL_MS)
   if (loginStates.size > 100) pruneExpiredStates()
-  return c.redirect(buildLoginAuthUrl(state))
+  return c.redirect(buildLoginAuthUrl(c, state))
 })
 
 authRouter.get('/auth/discord/login/callback', async (c) => {
@@ -54,7 +58,7 @@ authRouter.get('/auth/discord/login/callback', async (c) => {
   }
 
   try {
-    const tokens = await exchangeCode(code, getLoginRedirectUri())
+    const tokens = await exchangeCode(code, getLoginRedirectUri(c))
     const user = await getCurrentUser(tokens.access_token)
     if (user.id !== ownerId) {
       return c.text('This Discord account is not the configured owner.', 403)
