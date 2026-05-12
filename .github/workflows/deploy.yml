@@ -3,10 +3,12 @@ name: Deploy to Fly.io
 on:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 concurrency:
-  group: fly-deploy
+  group: fly-deploy-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -25,6 +27,7 @@ jobs:
   deploy:
     name: Deploy to Fly
     needs: verify
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

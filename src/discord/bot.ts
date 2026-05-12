@@ -1,5 +1,6 @@
 import { Client, Events, GatewayIntentBits, ChannelType } from 'discord.js'
 import { handleApprovalInteraction, handleThreadArchive, handleThreadMessage } from './handlers'
+import { getResolvedForumId, resolveForumChannel } from './forum'
 
 export interface BotHandle {
   client: Client
@@ -21,13 +22,16 @@ export async function startBot(): Promise<BotHandle> {
   const token = process.env.DISCORD_BOT_TOKEN
   if (!token) throw new Error('DISCORD_BOT_TOKEN must be set')
 
+  const resolved = await resolveForumChannel()
+  console.log(`[discord] forum "${resolved.forumName}" resolved to ${resolved.forumId} in guild ${resolved.guildId}`)
+
   const client = createBot()
 
   client.on(Events.MessageCreate, async (msg) => {
     if (msg.author.bot) return
     if (msg.channel.type !== ChannelType.PublicThread && msg.channel.type !== ChannelType.PrivateThread) return
     const parent = 'parent' in msg.channel ? msg.channel.parent : null
-    if (!parent || parent.name !== 'robot-city') return
+    if (!parent || parent.id !== getResolvedForumId()) return
 
     try {
       await handleThreadMessage({
@@ -45,7 +49,7 @@ export async function startBot(): Promise<BotHandle> {
   client.on(Events.ThreadUpdate, async (oldThread, newThread) => {
     if (oldThread.archived || !newThread.archived) return
     const parent = newThread.parent
-    if (!parent || parent.name !== 'robot-city') return
+    if (!parent || parent.id !== getResolvedForumId()) return
     try {
       await handleThreadArchive({ threadId: newThread.id })
     } catch (err) {
