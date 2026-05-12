@@ -46,7 +46,7 @@ describe('session cost accumulation', () => {
     mockAnthropicHaiku('a', false)
     await runStage('classify', 'first', 'sess-B')
     await runStage('gather', 'second', 'sess-B')
-    await runStage('act', 'third', 'sess-B')
+    await runStage('reason', 'third', 'sess-B')
 
     const total = getSessionCost('sess-B')
     expect(total).toBeCloseTo(EXPECTED_COST_PER_CALL * 3, 8)

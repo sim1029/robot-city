@@ -7,15 +7,76 @@ import {
 import { runStage, buildFooter } from '../stages/runner'
 import type { StageResult } from '../stages/types'
 import { gatherForIntent } from '../stages/gather'
-import { dispatchAct } from '../stages/act_dispatcher'
+import { dispatchToolCall } from '../stages/act_dispatcher'
 import { buildApprovalCardPayload, buildEditModal, buildResolvedCardPayload, type DiscordModal, parseApprovalCustomId } from './approval_card'
 import { editChannelMessage, sendApprovalCardForApproval, sendThreadMessage, sendTypingIndicator } from './dm'
-import { fetchThreadHistory, type ThreadHistoryMessage } from './history'
+import { fetchThreadHistory } from './history'
 import { getSetting } from '../db/settings'
 import { computeSessionStats, getSessionCost, markSessionClosed } from '../db/sessions'
 import { db } from '../db/client'
+import type { ContentBlock, ToolDefinition } from '../providers/types'
 
 export { sendApprovalCardForApproval }
+
+const FORUM_TOOLS: ToolDefinition[] = [
+  {
+    name: 'read_calendar',
+    description: 'Fetch upcoming calendar events.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        date: { type: 'string', description: 'Start date YYYY-MM-DD, defaults to today' },
+        days: { type: 'number', description: 'Number of days to look ahead, default 1' },
+      },
+    },
+  },
+  {
+    name: 'read_email',
+    description: 'Get emails triaged in the last 24 hours.',
+    input_schema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'create_calendar_event',
+    description: 'Create a Google Calendar event. Executes immediately without approval.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string' },
+        start: { type: 'string', description: 'ISO8601 datetime' },
+        end: { type: 'string', description: 'ISO8601 datetime' },
+        description: { type: 'string' },
+        location: { type: 'string' },
+      },
+      required: ['title', 'start', 'end'],
+    },
+  },
+  {
+    name: 'invite_attendees',
+    description: 'Invite attendees to a calendar event. Requires user approval.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        eventId: { type: 'string' },
+        emails: { type: 'array', items: { type: 'string' } },
+        eventTitle: { type: 'string' },
+      },
+      required: ['eventId', 'emails'],
+    },
+  },
+  {
+    name: 'send_email',
+    description: 'Send an email via Gmail. Requires user approval before sending.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        to: { type: 'string' },
+        subject: { type: 'string' },
+        body: { type: 'string' },
+      },
+      required: ['to', 'subject', 'body'],
+    },
+  },
+]
 
 const INTERACTIVE_CLASSIFY_PROMPT = (content: string) =>
   `Classify the user intent. Output exactly one label on the first line, then one sentence reason.
@@ -128,7 +189,7 @@ export async function handleThreadMessage(args: {
     .get() as { user_id: string } | null
   const gmailUserId = gmailRow?.user_id ?? ''
 
-  const history = await fetchThreadHistory(args.threadId, args.messageId).catch(() => [] as ThreadHistoryMessage[])
+  const history = await fetchThreadHistory(args.threadId, args.messageId).catch(() => [])
 
   const classifyResult = await runStage(
     'classify',
@@ -149,9 +210,10 @@ export async function handleThreadMessage(args: {
     gatherData ? `[CONTEXT]\n${gatherData}` : '',
   ].filter(Boolean).join('\n\n')
 
+  // Agentic tool loop — reason stage calls tools natively; we execute and feed results back
   const MAX_TOOL_ITERS = 5
   const allStageResults: StageResult[] = [classifyResult]
-  const reasonMessages: Array<{ role: 'user' | 'assistant'; content: string }> = [
+  const reasonMessages: Array<{ role: 'user' | 'assistant'; content: string | ContentBlock[] }> = [
     ...history,
     { role: 'user', content: latestUserContent },
   ]
@@ -160,38 +222,51 @@ export async function handleThreadMessage(args: {
   let dispatchNote = ''
 
   for (let iter = 0; iter < MAX_TOOL_ITERS; iter++) {
-    const reasonResult = await runStage('reason', reasonMessages, sessionId)
-    allStageResults.push(reasonResult)
-    finalReasonText = reasonResult.text
-
-    const actPrompt = [
-      dateHeader,
-      `[ORIGINAL MESSAGE]\n${args.content}`,
-      `[REASON]\n${reasonResult.text}`,
-    ].join('\n\n')
-    const actResult = await runStage('act', actPrompt, sessionId)
-    allStageResults.push(actResult)
-
-    if (!gmailUserId) break
-
-    const dispatch = await dispatchAct(actResult.text, {
-      gmailUserId,
-      discordUserId: args.userId,
-      sessionId,
+    const reasonResult = await runStage('reason', reasonMessages, sessionId, {
+      tools: gmailUserId ? FORUM_TOOLS : undefined,
     })
+    allStageResults.push(reasonResult)
+    if (reasonResult.text) finalReasonText = reasonResult.text
 
-    if (dispatch.kind === 'none') break
-    if (dispatch.kind === 'approval_pending') {
-      dispatchNote = '\n\n_Sent you an approval request via DM._'
-      break
+    const toolCalls = reasonResult.toolCalls ?? []
+    if (toolCalls.length === 0) break
+
+    // Build the assistant message with text + tool_use blocks for the next turn
+    const assistantContent: ContentBlock[] = []
+    if (reasonResult.text) assistantContent.push({ type: 'text', text: reasonResult.text })
+    for (const tc of toolCalls) {
+      assistantContent.push({ type: 'tool_use', id: tc.id, name: tc.name, input: tc.input })
     }
-    if (dispatch.kind === 'error') {
-      dispatchNote = `\n\n_Action failed: ${dispatch.message}_`
-      break
+    reasonMessages.push({ role: 'assistant', content: assistantContent })
+
+    // Execute tools and collect results
+    const toolResultBlocks: ContentBlock[] = []
+    let shouldStop = false
+
+    for (const tc of toolCalls) {
+      const dispatch = await dispatchToolCall(tc.name, tc.input, {
+        gmailUserId,
+        discordUserId: args.userId,
+        sessionId,
+      })
+
+      if (dispatch.kind === 'approval_pending') {
+        dispatchNote = '\n\n_Sent you an approval request via DM._'
+        toolResultBlocks.push({ type: 'tool_result', tool_use_id: tc.id, content: 'Action is pending user approval.' })
+        shouldStop = true
+        break
+      }
+      if (dispatch.kind === 'error') {
+        dispatchNote = `\n\n_Action failed: ${dispatch.message}_`
+        toolResultBlocks.push({ type: 'tool_result', tool_use_id: tc.id, content: `Error: ${dispatch.message}` })
+        shouldStop = true
+        break
+      }
+      toolResultBlocks.push({ type: 'tool_result', tool_use_id: tc.id, content: dispatch.output })
     }
-    // executed: feed result back and continue loop
-    reasonMessages.push({ role: 'assistant', content: reasonResult.text })
-    reasonMessages.push({ role: 'user', content: `[TOOL: ${dispatch.toolName}]\n${dispatch.output}` })
+
+    reasonMessages.push({ role: 'user', content: toolResultBlocks })
+    if (shouldStop) break
   }
 
   const sessionCost = getSessionCost(sessionId)

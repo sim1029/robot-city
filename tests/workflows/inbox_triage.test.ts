@@ -25,7 +25,8 @@ function mockAnthropic(text: string, model = 'claude-haiku-4-5-20251001') {
   mockFetch('https://api.anthropic.com/v1/messages', {
     json: {
       model,
-      content: [{ text }],
+      content: [{ type: 'text', text }],
+      stop_reason: 'end_turn',
       usage: { input_tokens: 100, output_tokens: 50 },
     },
   }, { once: true })
