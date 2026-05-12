@@ -1,5 +1,5 @@
 import { Client, Events, GatewayIntentBits, ChannelType } from 'discord.js'
-import { handleApprovalInteraction, handleThreadArchive, handleThreadMessage } from './handlers'
+import { handleApprovalInteraction, handleEditModalSubmit, handleThreadArchive, handleThreadMessage } from './handlers'
 import { getResolvedForumId, resolveForumChannel } from './forum'
 
 export interface BotHandle {
@@ -58,22 +58,53 @@ export async function startBot(): Promise<BotHandle> {
   })
 
   client.on(Events.InteractionCreate, async (interaction) => {
-    if (!interaction.isButton()) return
-    try {
-      const outcome = await handleApprovalInteraction({
-        customId: interaction.customId,
-        interactionChannelId: interaction.channelId ?? '',
-      })
-      if (outcome.kind === 'ignored') return
-      if (outcome.kind === 'stale') {
-        await interaction.reply({ content: `Already ${outcome.status}.`, ephemeral: true })
-        return
+    if (interaction.isButton()) {
+      try {
+        const outcome = await handleApprovalInteraction({
+          customId: interaction.customId,
+          interactionChannelId: interaction.channelId ?? '',
+        })
+        if (outcome.kind === 'ignored') return
+        if (outcome.kind === 'stale') {
+          await interaction.reply({ content: `Already ${outcome.status}.`, ephemeral: true })
+          return
+        }
+        if (outcome.kind === 'show_modal') {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          await interaction.showModal(outcome.modal as any)
+          return
+        }
+        await interaction.deferUpdate()
+      } catch (err) {
+        console.error('approval interaction error', err)
+        if (!interaction.replied && !interaction.deferred) {
+          await interaction.reply({ content: `Error: ${err instanceof Error ? err.message : String(err)}`, ephemeral: true })
+        }
       }
-      await interaction.deferUpdate()
-    } catch (err) {
-      console.error('approval interaction error', err)
-      if (!interaction.replied && !interaction.deferred) {
-        await interaction.reply({ content: `Error: ${err instanceof Error ? err.message : String(err)}`, ephemeral: true })
+    } else if (interaction.isModalSubmit()) {
+      try {
+        const subject = interaction.fields.getTextInputValue('subject')
+        const body = interaction.fields.getTextInputValue('body')
+        const outcome = await handleEditModalSubmit({
+          customId: interaction.customId,
+          fields: { subject, body },
+          interactionChannelId: interaction.channelId ?? '',
+        })
+        if (outcome.kind === 'ignored') return
+        if (outcome.kind === 'stale') {
+          await interaction.reply({ content: `Already ${outcome.status}.`, ephemeral: true })
+          return
+        }
+        if (interaction.isFromMessage()) {
+          await interaction.deferUpdate()
+        } else {
+          await interaction.deferReply({ ephemeral: true })
+        }
+      } catch (err) {
+        console.error('edit modal submit error', err)
+        if (!interaction.replied && !interaction.deferred) {
+          await interaction.reply({ content: `Error: ${err instanceof Error ? err.message : String(err)}`, ephemeral: true })
+        }
       }
     }
   })

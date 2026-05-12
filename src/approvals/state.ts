@@ -113,6 +113,14 @@ export function setApprovalDiscordMessage(id: string, discordMessageId: string):
   db.run('UPDATE pending_approvals SET discord_message_id = ? WHERE id = ?', [discordMessageId, id])
 }
 
+export function updateApprovalPayload(id: string, patch: Record<string, unknown>): void {
+  const a = getApproval(id)
+  if (!a) throw new ApprovalStateError(`Approval ${id} not found`)
+  if (a.status !== 'pending') throw new ApprovalStateError(`Approval ${id} is ${a.status}, cannot update payload`)
+  const merged = { ...(a.payload as Record<string, unknown>), ...patch }
+  db.run('UPDATE pending_approvals SET payload = ? WHERE id = ?', [JSON.stringify(merged), id])
+}
+
 interface RawApprovalRow {
   id: string
   action: string

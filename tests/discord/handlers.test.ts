@@ -4,6 +4,7 @@ import { db } from '../../src/db/client'
 import { migrate } from '../../src/db/schema'
 import {
   handleApprovalInteraction,
+  handleEditModalSubmit,
   handleThreadMessage,
   sendApprovalCardForApproval,
 } from '../../src/discord/handlers'
@@ -91,6 +92,73 @@ describe('discord handlers', () => {
   test('handleApprovalInteraction with malformed customId returns ignored', async () => {
     const r = await handleApprovalInteraction({ customId: 'unrelated:foo', interactionChannelId: 'dm-1' })
     expect(r.kind).toBe('ignored')
+  })
+
+  test('handleApprovalInteraction edit → returns show_modal with correct modal structure', async () => {
+    const id = createApproval({ action: 'send_email', payload: { to: 'a@b.com', subject: 'hi', body: 'draft body' } })
+
+    const result = await handleApprovalInteraction({
+      customId: `approval:${id}:edit`,
+      interactionChannelId: 'dm-1',
+    })
+
+    expect(result.kind).toBe('show_modal')
+    if (result.kind !== 'show_modal') return
+    expect(result.modal.custom_id).toBe(`approval:${id}:edit_submit`)
+    expect(result.modal.title).toBe('Edit Email')
+    const subjectInput = result.modal.components[0].components[0]
+    expect(subjectInput.value).toBe('hi')
+    const bodyInput = result.modal.components[1].components[0]
+    expect(bodyInput.value).toBe('draft body')
+    // approval stays pending — no state change
+    expect(getApproval(id)?.status).toBe('pending')
+  })
+
+  test('handleEditModalSubmit updates payload and refreshes card', async () => {
+    const id = createApproval({ action: 'send_email', payload: { to: 'a@b.com', subject: 'old subject', body: 'old body' } })
+    db.run('UPDATE pending_approvals SET discord_message_id = ? WHERE id = ?', ['msg-edit', id])
+
+    mockFetch(/channels\/.*\/messages\/msg-edit$/, { json: { id: 'msg-edit' } })
+
+    const result = await handleEditModalSubmit({
+      customId: `approval:${id}:edit_submit`,
+      fields: { subject: 'new subject', body: 'new body' },
+      interactionChannelId: 'dm-edit',
+    })
+
+    expect(result.kind).toBe('edited')
+    const updated = getApproval(id)!
+    const payload = updated.payload as { subject: string; body: string }
+    expect(payload.subject).toBe('new subject')
+    expect(payload.body).toBe('new body')
+    expect(updated.status).toBe('pending')
+
+    const editCall = fetchCalls().find(c => c.method === 'PATCH')!
+    const body = editCall.bodyJson() as { content: string; components: unknown[] }
+    expect(body.content).toContain('new subject')
+    expect(body.content).toContain('new body')
+    expect(body.components).toHaveLength(1) // still has buttons
+  })
+
+  test('handleEditModalSubmit with malformed customId returns ignored', async () => {
+    const r = await handleEditModalSubmit({
+      customId: 'other:foo:bar',
+      fields: { subject: 's', body: 'b' },
+      interactionChannelId: 'dm-1',
+    })
+    expect(r.kind).toBe('ignored')
+  })
+
+  test('handleEditModalSubmit returns stale on already-resolved approval', async () => {
+    const id = createApproval({ action: 'send_email', payload: { to: 'a@b.com', subject: 'hi', body: 'x' } })
+    db.run("UPDATE pending_approvals SET status = 'approved' WHERE id = ?", [id])
+
+    const result = await handleEditModalSubmit({
+      customId: `approval:${id}:edit_submit`,
+      fields: { subject: 's', body: 'b' },
+      interactionChannelId: 'dm-1',
+    })
+    expect(result.kind).toBe('stale')
   })
 
   test('handleApprovalInteraction returns stale on already-resolved approval', async () => {

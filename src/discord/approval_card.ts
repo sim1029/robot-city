@@ -19,6 +19,24 @@ export interface DiscordMessagePayload {
   components: DiscordActionRow[]
 }
 
+export interface DiscordTextInput {
+  type: 4
+  custom_id: string
+  label: string
+  style: 1 | 2
+  value?: string
+  required?: boolean
+  max_length?: number
+}
+
+export interface DiscordModal {
+  title: string
+  custom_id: string
+  components: Array<{ type: 1; components: DiscordTextInput[] }>
+}
+
+const MODAL_BODY_LIMIT = 4000
+
 export function buildApprovalCardPayload(a: Approval): DiscordMessagePayload {
   const content = describeApproval(a)
   return {
@@ -28,6 +46,7 @@ export function buildApprovalCardPayload(a: Approval): DiscordMessagePayload {
         type: 1,
         components: [
           { type: 2, style: BUTTON_STYLE.GREEN, label: 'Approve', custom_id: `approval:${a.id}:approve` },
+          { type: 2, style: BUTTON_STYLE.SECONDARY, label: 'Edit', custom_id: `approval:${a.id}:edit` },
           { type: 2, style: BUTTON_STYLE.RED, label: 'Cancel', custom_id: `approval:${a.id}:reject` },
         ],
       },
@@ -41,9 +60,49 @@ export function buildResolvedCardPayload(a: Approval, decision: 'approved' | 're
   return { content: `**${heading}**\n${summary}`, components: [] }
 }
 
+export function buildEditModal(a: Approval): DiscordModal {
+  const p = a.payload as { to?: string; subject?: string; body?: string }
+  const subject = p.subject ?? ''
+  const body = p.body ?? ''
+  return {
+    title: 'Edit Email',
+    custom_id: `approval:${a.id}:edit_submit`,
+    components: [
+      {
+        type: 1,
+        components: [
+          {
+            type: 4,
+            custom_id: 'subject',
+            label: 'Subject',
+            style: 1,
+            required: true,
+            value: subject,
+            max_length: 998,
+          },
+        ],
+      },
+      {
+        type: 1,
+        components: [
+          {
+            type: 4,
+            custom_id: 'body',
+            label: 'Body',
+            style: 2,
+            required: true,
+            value: body.length <= MODAL_BODY_LIMIT ? body : '',
+            max_length: MODAL_BODY_LIMIT,
+          },
+        ],
+      },
+    ],
+  }
+}
+
 export interface ParsedCustomId {
   id: string
-  decision: 'approve' | 'reject'
+  decision: 'approve' | 'reject' | 'edit'
 }
 
 export function parseApprovalCustomId(customId: string): ParsedCustomId | null {
@@ -51,7 +110,7 @@ export function parseApprovalCustomId(customId: string): ParsedCustomId | null {
   if (parts.length !== 3) return null
   const [prefix, id, decision] = parts
   if (prefix !== 'approval') return null
-  if (decision !== 'approve' && decision !== 'reject') return null
+  if (decision !== 'approve' && decision !== 'reject' && decision !== 'edit') return null
   return { id, decision }
 }
 

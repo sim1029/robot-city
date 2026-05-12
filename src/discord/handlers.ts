@@ -2,11 +2,12 @@ import {
   approveApproval,
   getApproval,
   rejectApproval,
+  updateApprovalPayload,
 } from '../approvals/state'
 import { runStage, buildFooter } from '../stages/runner'
 import { gatherForIntent } from '../stages/gather'
 import { dispatchAct } from '../stages/act_dispatcher'
-import { buildResolvedCardPayload, parseApprovalCustomId } from './approval_card'
+import { buildApprovalCardPayload, buildEditModal, buildResolvedCardPayload, type DiscordModal, parseApprovalCustomId } from './approval_card'
 import { editChannelMessage, sendApprovalCardForApproval, sendThreadMessage, sendTypingIndicator } from './dm'
 import { fetchThreadHistory, type ThreadHistoryMessage } from './history'
 import { getSetting } from '../db/settings'
@@ -41,6 +42,12 @@ export type InteractionOutcome =
   | { kind: 'ignored' }
   | { kind: 'stale'; status: string }
   | { kind: 'resolved'; decision: 'approve' | 'reject' }
+  | { kind: 'show_modal'; modal: DiscordModal }
+
+export type EditModalOutcome =
+  | { kind: 'ignored' }
+  | { kind: 'stale'; status: string }
+  | { kind: 'edited' }
 
 export async function handleApprovalInteraction(args: {
   customId: string
@@ -52,6 +59,10 @@ export async function handleApprovalInteraction(args: {
   const approval = getApproval(parsed.id)
   if (!approval) return { kind: 'stale', status: 'missing' }
   if (approval.status !== 'pending') return { kind: 'stale', status: approval.status }
+
+  if (parsed.decision === 'edit') {
+    return { kind: 'show_modal', modal: buildEditModal(approval) }
+  }
 
   if (parsed.decision === 'approve') {
     await approveApproval(approval.id)
@@ -70,6 +81,35 @@ export async function handleApprovalInteraction(args: {
     )
   }
   return { kind: 'resolved', decision: parsed.decision }
+}
+
+export async function handleEditModalSubmit(args: {
+  customId: string
+  fields: { subject: string; body: string }
+  interactionChannelId: string
+}): Promise<EditModalOutcome> {
+  const parts = args.customId.split(':')
+  if (parts.length !== 3 || parts[0] !== 'approval' || parts[2] !== 'edit_submit') {
+    return { kind: 'ignored' }
+  }
+  const approvalId = parts[1]
+
+  const approval = getApproval(approvalId)
+  if (!approval) return { kind: 'stale', status: 'missing' }
+  if (approval.status !== 'pending') return { kind: 'stale', status: approval.status }
+
+  updateApprovalPayload(approvalId, { subject: args.fields.subject, body: args.fields.body })
+
+  const updated = getApproval(approvalId)!
+  const messageId = updated.discord_message_id
+  if (messageId) {
+    await editChannelMessage(
+      args.interactionChannelId,
+      messageId,
+      buildApprovalCardPayload(updated)
+    )
+  }
+  return { kind: 'edited' }
 }
 
 export async function handleThreadMessage(args: {
