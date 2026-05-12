@@ -26,6 +26,7 @@ describe('discord handlers', () => {
     db.run('DELETE FROM pending_approvals')
     db.run('DELETE FROM events')
     db.run('DELETE FROM sessions')
+    db.run('DELETE FROM gmail_tokens')
     resetApprovalHandlersForTest()
   })
   afterEach(() => resetFetchMock())
@@ -317,5 +318,70 @@ describe('discord handlers', () => {
     // Discord fetch should have used `before` so the current message is not in history
     const historyCall = fetchCalls().find(c => c.method === 'GET' && c.url.includes('/channels/thread-9/messages'))!
     expect(historyCall.url).toContain('before=msg-current')
+  })
+
+  test('handleThreadMessage executes tool and feeds result into second reason iteration', async () => {
+    // Provide a gmail_tokens row so gmailUserId is set and the tool loop runs
+    db.run(
+      `INSERT INTO gmail_tokens (user_id, access_token, refresh_token, expires_at, scope) VALUES ('u1', 'tok', 'ref', 9999999999, 'email')`
+    )
+
+    // classify
+    mockFetch('https://api.anthropic.com/v1/messages', {
+      json: { model: 'claude-haiku-4-5-20251001', content: [{ text: 'READ_EMAIL\nUser wants email summary.' }], usage: { input_tokens: 50, output_tokens: 10 } },
+    }, { once: true })
+    // first reason
+    mockFetch('https://api.anthropic.com/v1/messages', {
+      json: { model: 'claude-sonnet-4-6', content: [{ text: "Let me check your emails." }], usage: { input_tokens: 80, output_tokens: 20 } },
+    }, { once: true })
+    // first act → read_email
+    mockFetch('https://api.anthropic.com/v1/messages', {
+      json: { model: 'claude-haiku-4-5-20251001', content: [{ text: '{"tool":"read_email","args":{}}' }], usage: { input_tokens: 60, output_tokens: 10 } },
+    }, { once: true })
+    // second reason — capture messages sent to it
+    let secondReasonMessages: Array<{ role: string; content: string }> | null = null
+    mockFetch(
+      (req) => {
+        if (req.url !== 'https://api.anthropic.com/v1/messages') return false
+        return (req.bodyJson() as { model: string }).model === 'claude-sonnet-4-6'
+      },
+      async (req) => {
+        secondReasonMessages = (req.bodyJson() as { messages: Array<{ role: string; content: string }> }).messages
+        return { json: { model: 'claude-sonnet-4-6', content: [{ text: 'You have no recent emails.' }], usage: { input_tokens: 200, output_tokens: 30 } } }
+      },
+      { once: true }
+    )
+    // second act → none
+    mockFetch('https://api.anthropic.com/v1/messages', {
+      json: { model: 'claude-haiku-4-5-20251001', content: [{ text: '{"tool":"none"}' }], usage: { input_tokens: 60, output_tokens: 5 } },
+    }, { once: true })
+
+    mockFetch(/channels\/thread-loop\/messages\?/, { json: [] })
+    mockFetch(/channels\/thread-loop\/typing$/, { status: 204, json: null })
+    mockFetch(/channels\/thread-loop\/messages$/, { json: { id: 'reply-loop' } })
+
+    await handleThreadMessage({
+      threadId: 'thread-loop',
+      userId: 'discord-user-1',
+      messageId: 'msg-loop',
+      content: 'Show me my recent emails.',
+    })
+
+    // Second reason should have received the tool result as a [TOOL: read_email] user message
+    expect(secondReasonMessages).not.toBeNull()
+    const toolMsg = secondReasonMessages!.find(m => m.content.includes('[TOOL: read_email]'))
+    expect(toolMsg).toBeDefined()
+    expect(toolMsg!.role).toBe('user')
+    expect(toolMsg!.content).toContain('No emails triaged in the last 24 hours.')
+
+    // The assistant's first-iteration text should also be in the messages (as assistant role)
+    const intermediateAssistant = secondReasonMessages!.find(m => m.role === 'assistant' && m.content.includes('Let me check your emails.'))
+    expect(intermediateAssistant).toBeDefined()
+
+    // Final reply should use the SECOND reason text, not the first
+    const replyCall = fetchCalls().find(c => c.method === 'POST' && c.url.endsWith('/thread-loop/messages'))!
+    const body = replyCall.bodyJson() as { content: string }
+    expect(body.content).toContain('You have no recent emails.')
+    expect(body.content).not.toContain('Let me check your emails.')
   })
 })

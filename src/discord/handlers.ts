@@ -5,6 +5,7 @@ import {
   updateApprovalPayload,
 } from '../approvals/state'
 import { runStage, buildFooter } from '../stages/runner'
+import type { StageResult } from '../stages/types'
 import { gatherForIntent } from '../stages/gather'
 import { dispatchAct } from '../stages/act_dispatcher'
 import { buildApprovalCardPayload, buildEditModal, buildResolvedCardPayload, type DiscordModal, parseApprovalCustomId } from './approval_card'
@@ -148,41 +149,54 @@ export async function handleThreadMessage(args: {
     gatherData ? `[CONTEXT]\n${gatherData}` : '',
   ].filter(Boolean).join('\n\n')
 
-  const reasonMessages: ThreadHistoryMessage[] = [
+  const MAX_TOOL_ITERS = 5
+  const allStageResults: StageResult[] = [classifyResult]
+  const reasonMessages: Array<{ role: 'user' | 'assistant'; content: string }> = [
     ...history,
     { role: 'user', content: latestUserContent },
   ]
 
-  const reasonResult = await runStage('reason', reasonMessages, sessionId)
-
-  const actPrompt = [
-    dateHeader,
-    `[ORIGINAL MESSAGE]\n${args.content}`,
-    `[REASON]\n${reasonResult.text}`,
-  ].join('\n\n')
-
-  const actResult = await runStage('act', actPrompt, sessionId)
-
+  let finalReasonText = ''
   let dispatchNote = ''
-  if (gmailUserId) {
+
+  for (let iter = 0; iter < MAX_TOOL_ITERS; iter++) {
+    const reasonResult = await runStage('reason', reasonMessages, sessionId)
+    allStageResults.push(reasonResult)
+    finalReasonText = reasonResult.text
+
+    const actPrompt = [
+      dateHeader,
+      `[ORIGINAL MESSAGE]\n${args.content}`,
+      `[REASON]\n${reasonResult.text}`,
+    ].join('\n\n')
+    const actResult = await runStage('act', actPrompt, sessionId)
+    allStageResults.push(actResult)
+
+    if (!gmailUserId) break
+
     const dispatch = await dispatchAct(actResult.text, {
       gmailUserId,
       discordUserId: args.userId,
       sessionId,
     })
 
-    if (dispatch.kind === 'executed') {
-      dispatchNote = `\n\n${dispatch.output}`
-    } else if (dispatch.kind === 'approval_pending') {
+    if (dispatch.kind === 'none') break
+    if (dispatch.kind === 'approval_pending') {
       dispatchNote = '\n\n_Sent you an approval request via DM._'
-    } else if (dispatch.kind === 'error') {
-      dispatchNote = `\n\n_Action failed: ${dispatch.message}_`
+      break
     }
+    if (dispatch.kind === 'error') {
+      dispatchNote = `\n\n_Action failed: ${dispatch.message}_`
+      break
+    }
+    // executed: feed result back and continue loop
+    reasonMessages.push({ role: 'assistant', content: reasonResult.text })
+    reasonMessages.push({ role: 'user', content: `[TOOL: ${dispatch.toolName}]\n${dispatch.output}` })
   }
 
   const sessionCost = getSessionCost(sessionId)
-  const footer = buildFooter([classifyResult, reasonResult, actResult], sessionCost)
-  const reply = `${reasonResult.text}${dispatchNote}\n\n${footer}`
+  const footer = buildFooter(allStageResults, sessionCost)
+  const reply = `${finalReasonText}${dispatchNote}\n\n${footer}`
   await sendThreadMessage(args.threadId, reply)
 }
 

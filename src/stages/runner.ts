@@ -17,12 +17,12 @@ const STAGE_DEFAULTS: Record<StageName, StageConfig> = {
   reason: {
     model: 'claude-sonnet-4-6',
     maxOutputTokens: 2000,
-    systemPrompt: "You are an AI life concierge with access to the following tools that execute automatically after your response: create_calendar_event, read_calendar, invite_attendees (requires user approval), send_email (requires user approval). When the user requests a calendar or email action, confirm you will do it — never say you can't access external services. The user's original message appears in context labeled [ORIGINAL MESSAGE]; ignore [CLASSIFY] and [CONTEXT] tags — those are internal pipeline state, not part of the conversation.",
+    systemPrompt: "You are an AI life concierge. Tools available (run automatically after each response): read_calendar, read_email, create_calendar_event — execute immediately and return results; invite_attendees, send_email — require user approval before executing. When a tool runs, its result will appear in the next turn labeled [TOOL: name]. Use tools as needed, then produce a final user-facing response once you have all the information you need. Never say you can't access external services. Ignore internal pipeline tags [ORIGINAL MESSAGE], [CLASSIFY], [CONTEXT], [TOOL: ...] — they are metadata, not conversation.",
   },
   act: {
     model: 'claude-haiku-4-5-20251001',
     maxOutputTokens: 300,
-    systemPrompt: 'Output a single JSON object: {"tool":"<name>","args":{...}}\nAvailable tools:\n- "none": no action needed\n- "create_calendar_event": {"title":string,"start":string (ISO8601),"end":string (ISO8601),"description"?:string,"location"?:string}\n- "invite_attendees": {"eventId":string,"emails":string[],"eventTitle"?:string}\n- "send_email": {"to":string,"subject":string,"body":string}\nOnly output JSON. No prose.',
+    systemPrompt: 'Output a single JSON object: {"tool":"<name>","args":{...}}\nAvailable tools:\n- "none": no action needed\n- "read_calendar": {"date"?:string (YYYY-MM-DD, defaults today),"days"?:number (default 1)}\n- "read_email": {}\n- "create_calendar_event": {"title":string,"start":string (ISO8601),"end":string (ISO8601),"description"?:string,"location"?:string}\n- "invite_attendees": {"eventId":string,"emails":string[],"eventTitle"?:string}\n- "send_email": {"to":string,"subject":string,"body":string}\nOnly output JSON. No prose.',
   },
 }
 

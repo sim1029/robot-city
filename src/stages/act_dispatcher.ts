@@ -1,11 +1,14 @@
 import { createCalendarEvent } from '../tools/create_calendar_event'
 import { requestInviteAttendees } from '../tools/invite_attendees'
 import { requestSendEmail } from '../tools/send_email'
+import { readCalendar } from '../tools/read_calendar'
 import { sendApprovalCardForApproval } from '../discord/dm'
+import { getValidGmailAccessToken } from '../gmail/tokens'
+import { db } from '../db/client'
 
 export type DispatchResult =
   | { kind: 'none' }
-  | { kind: 'executed'; output: string }
+  | { kind: 'executed'; toolName: string; output: string }
   | { kind: 'approval_pending'; approvalId: string }
   | { kind: 'error'; message: string }
 
@@ -41,6 +44,37 @@ export async function dispatchAct(
   }
 
   try {
+    if (tool === 'read_calendar') {
+      console.log('[act] dispatching read_calendar for gmailUser=%s', ctx.gmailUserId)
+      const accessToken = await getValidGmailAccessToken(ctx.gmailUserId)
+      const output = await readCalendar(accessToken, {
+        date: args.date ? String(args.date) : undefined,
+        days: args.days ? Number(args.days) : undefined,
+      })
+      console.log('[act] read_calendar returned %d chars', output.length)
+      return { kind: 'executed', toolName: 'read_calendar', output }
+    }
+
+    if (tool === 'read_email') {
+      console.log('[act] dispatching read_email')
+      const since = Math.floor(Date.now() / 1000) - 86400
+      const rows = db.query(
+        `SELECT payload FROM events WHERE type = 'workflow:triage' AND created_at > ? ORDER BY created_at DESC LIMIT 10`
+      ).all(since) as Array<{ payload: string }>
+      if (rows.length === 0) {
+        return { kind: 'executed', toolName: 'read_email', output: 'No emails triaged in the last 24 hours.' }
+      }
+      const lines = rows.map(r => {
+        try {
+          const p = JSON.parse(r.payload) as { from?: string; subject?: string; classification?: string }
+          return `• [${p.classification?.toUpperCase()}] ${p.subject ?? '(no subject)'} from ${p.from ?? 'unknown'}`
+        } catch {
+          return '• (unreadable)'
+        }
+      })
+      return { kind: 'executed', toolName: 'read_email', output: `Recent emails:\n${lines.join('\n')}` }
+    }
+
     if (tool === 'create_calendar_event') {
       console.log('[act] dispatching create_calendar_event for gmailUser=%s', ctx.gmailUserId)
       const output = await createCalendarEvent(
@@ -55,7 +89,7 @@ export async function dispatchAct(
         { gmailUserId: ctx.gmailUserId, sessionId: ctx.sessionId }
       )
       console.log('[act] create_calendar_event succeeded:', output)
-      return { kind: 'executed', output }
+      return { kind: 'executed', toolName: 'create_calendar_event', output }
     }
 
     if (tool === 'invite_attendees') {
