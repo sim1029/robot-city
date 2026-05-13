@@ -12,6 +12,7 @@ import { buildApprovalCardPayload, buildEditModal, buildResolvedCardPayload, typ
 import { editChannelMessage, sendApprovalCardForApproval, sendThreadMessage, sendTypingIndicator } from './dm'
 import { fetchThreadHistory } from './history'
 import { getSetting } from '../db/settings'
+import { isPaused } from '../system/pause'
 import { computeSessionStats, getSessionCost, markSessionClosed } from '../db/sessions'
 import { db } from '../db/client'
 import type { ContentBlock, ToolDefinition } from '../providers/types'
@@ -181,6 +182,14 @@ export async function handleThreadMessage(args: {
   content: string
 }): Promise<void> {
   const sessionId = `discord:${args.threadId}`
+
+  if (isPaused()) {
+    await sendThreadMessage(
+      args.threadId,
+      '🛑 Assistant is paused. Re-enable it from the admin `/actions` page or with `/resume` in Discord.'
+    )
+    return
+  }
 
   await sendTypingIndicator(args.threadId)
 

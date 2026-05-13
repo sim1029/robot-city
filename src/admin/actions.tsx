@@ -3,14 +3,38 @@ import { db } from '../db/client'
 import { generateBrief } from '../workflows/morning_brief'
 import { getProfile } from '../gmail/client'
 import { saveGmailTokens } from '../gmail/tokens'
+import { isPaused, setPaused } from '../system/pause'
 import { Layout } from './components/Layout'
 import { renderPage, renderFragment } from './render'
 
-function ActionsPage({ csrfToken }: { csrfToken: string }) {
+function PauseSection({ paused }: { paused: boolean }) {
+  return (
+    <section className="action" id="pause-section">
+      <h3>{paused ? '🛑 Assistant is paused' : '✅ Assistant is active'}</h3>
+      <p className="muted">
+        When paused, scheduled briefs and Gmail triage no-op, and forum thread messages get a
+        short non-LLM reply. The server stays running. You can also toggle this with
+        <code> /pause</code> and <code>/resume</code> in Discord.
+      </p>
+      <button
+        className={paused ? 'btn-primary' : 'btn-danger'}
+        hx-post="/admin/actions/pause-toggle"
+        hx-target="#pause-section"
+        hx-swap="outerHTML"
+      >
+        {paused ? 'Resume assistant' : 'Pause assistant'}
+      </button>
+    </section>
+  )
+}
+
+function ActionsPage({ csrfToken, paused }: { csrfToken: string; paused: boolean }) {
   return (
     <Layout title="Actions" csrfToken={csrfToken} currentPath="/admin/actions">
       <h2>Actions</h2>
       <p className="muted">Manual triggers for debugging and ad-hoc operation.</p>
+
+      <PauseSection paused={paused} />
 
       <section className="action">
         <h3>Run brief now</h3>
@@ -60,7 +84,13 @@ export const actionsRoutes = new Hono()
 
 actionsRoutes.get('/', (c) => {
   const csrfToken = c.get('csrf_token') as string
-  return c.html(renderPage(<ActionsPage csrfToken={csrfToken} />))
+  return c.html(renderPage(<ActionsPage csrfToken={csrfToken} paused={isPaused()} />))
+})
+
+actionsRoutes.post('/pause-toggle', (c) => {
+  const next = !isPaused()
+  setPaused(next, 'admin')
+  return c.html(renderFragment(<PauseSection paused={next} />))
 })
 
 actionsRoutes.post('/run-brief', async (c) => {

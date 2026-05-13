@@ -14,7 +14,7 @@ export function getOAuthUrl(state: string): string {
     client_id: clientId,
     redirect_uri: redirectUri,
     response_type: 'code',
-    scope: 'identify guilds bot',
+    scope: 'identify guilds bot applications.commands',
     permissions: BOT_PERMISSIONS,
     state,
   })

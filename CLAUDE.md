@@ -26,7 +26,8 @@ src/
                         #   forum.ts (env-driven forum-name resolver + cached forum ID),
                         #   handlers.ts (pure thread/interaction logic), dm.ts (REST helpers),
                         #   approval_card.ts (button payloads + custom_id parser),
-                        #   history.ts (fetch thread history → multi-turn messages, strip footers)
+                        #   history.ts (fetch thread history → multi-turn messages, strip footers),
+                        #   slash_commands.ts (register + handle /pause /resume /status, owner-only)
   gmail/                # oauth.ts, tokens.ts (refresh + storage), client.ts (REST + RFC 822),
                         #   poll.ts (history-watermark loop, GmailHistoryGoneError recovery),
                         #   triage_loop.ts (poll → triage → DM → approval glue)
@@ -40,6 +41,9 @@ src/
                         #   + sessions.ts (cost accumulator, discord_thread linkage, stats, close)
                         #   + snapshot.ts (pre-migration backups, last 5 kept under /data/snapshots/)
   cron/                 # scheduler.ts: setInterval tick for morning/midday/evening briefs
+  system/               # pause.ts: global pause flag (isPaused/setPaused) read by scheduler,
+                        #   triage loop, and discord thread handler; toggled from /admin/actions
+                        #   and Discord slash commands /pause /resume /status
   vault/                # encrypted BYOK key storage
   auth/                 # sessions.ts (admin_sessions table helpers),
                         #   middleware.ts (requireOwner + csrf), discord_login.ts (login OAuth flow)
