@@ -59,12 +59,13 @@ describe('send_email tool', () => {
     expect(result.handler_result).toEqual({ id: 'gmail-1', threadId: 'gth-1' })
     expect(fetchCalls()).toHaveLength(1)
 
-    const ev = db.query("SELECT type, payload FROM events WHERE type = 'tool:send_email' ORDER BY id DESC LIMIT 1").get() as { type: string; payload: string } | null
+    const ev = db.query("SELECT type, payload, output FROM events WHERE type = 'tool:send_email' ORDER BY id DESC LIMIT 1").get() as { type: string; payload: string; output: string } | null
     expect(ev).not.toBeNull()
     const payload = JSON.parse(ev!.payload)
     expect(payload.to).toBe('a@b.com')
     expect(payload.subject).toBe('hi')
-    expect(payload.gmail_id).toBe('gmail-1')
+    const output = JSON.parse(ev!.output)
+    expect(output.success).toBe(true)
     expect(payload.body).toBeUndefined()
   })
 

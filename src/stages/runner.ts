@@ -1,7 +1,7 @@
 import { callLLM } from '../providers/router'
 import type { ContentBlock } from '../providers/types'
 import type { StageName, StageConfig, StageResult, RunResult } from './types'
-import { db } from '../db/client'
+import { insertEvent } from '../db/events'
 import { bumpSessionCost, ensureSession } from '../db/sessions'
 
 const STAGE_DEFAULTS: Record<StageName, StageConfig> = {
@@ -62,21 +62,17 @@ export async function runStage(
     ? input.slice(0, 300)
     : typeof lastContent === 'string' ? lastContent.slice(0, 300) : JSON.stringify(lastContent).slice(0, 300)
 
-  db.run(
-    `INSERT INTO events (session_id, type, model, input_tokens, output_tokens, cost_usd, latency_ms, payload, output)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      sessionId,
-      `stage:${stage}`,
-      result.model,
-      result.inputTokens,
-      result.outputTokens,
-      result.costUsd,
-      result.latencyMs,
-      JSON.stringify({ prompt: promptPreview }),
-      result.text,
-    ]
-  )
+  insertEvent({
+    sessionId,
+    type: `stage:${stage}`,
+    model: result.model,
+    inputTokens: result.inputTokens,
+    outputTokens: result.outputTokens,
+    costUsd: result.costUsd,
+    latencyMs: result.latencyMs,
+    payload: JSON.stringify({ prompt: promptPreview }),
+    output: result.text,
+  })
 
   return stageResult
 }
