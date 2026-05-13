@@ -2,7 +2,7 @@ import { db } from '../db/client'
 import { getValidGmailAccessToken } from '../gmail/tokens'
 import { readCalendar } from '../tools/read_calendar'
 import { runStage } from '../stages/runner'
-import { sendDm } from '../discord/dm'
+import { openDmChannel, sendThreadMessage, sendTypingIndicator } from '../discord/dm'
 
 export type BriefLabel = 'morning' | 'midday' | 'evening'
 
@@ -47,15 +47,24 @@ export async function generateBrief(opts: BriefOpts): Promise<void> {
 
   const briefPrompt = `[TODAY'S CALENDAR]\n${calendarData}\n\n[RECENT EMAILS]\n${emailData}`
 
-  const result = await runStage('reason', briefPrompt, null, {
-    systemPrompt: BRIEF_SYSTEM_PROMPTS[opts.label],
-    maxOutputTokens: 600,
-  })
+  const dmChannelId = await openDmChannel(opts.discordUserId)
+  await sendTypingIndicator(dmChannelId)
+  const typingInterval = setInterval(() => { sendTypingIndicator(dmChannelId).catch(() => {}) }, 8000)
+
+  let result: Awaited<ReturnType<typeof runStage>>
+  try {
+    result = await runStage('reason', briefPrompt, null, {
+      systemPrompt: BRIEF_SYSTEM_PROMPTS[opts.label],
+      maxOutputTokens: 600,
+    })
+  } finally {
+    clearInterval(typingInterval)
+  }
 
   const label = opts.label.charAt(0).toUpperCase() + opts.label.slice(1)
   const content = `**${label} Brief**\n\n${result.text}`
 
-  await sendDm(opts.discordUserId, { content, components: [] })
+  await sendThreadMessage(dmChannelId, content)
 
   db.run(
     `INSERT INTO events (session_id, type, model, input_tokens, output_tokens, cost_usd, latency_ms, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
