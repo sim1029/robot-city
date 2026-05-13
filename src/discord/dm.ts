@@ -62,6 +62,42 @@ export async function sendApprovalCardForApproval(approvalId: string, discordUse
   setApprovalDiscordMessage(approvalId, ref.messageId)
 }
 
+export interface DmFileOpts {
+  content: string
+  filename: string
+  data: ArrayBuffer
+  contentType: string
+}
+
+export async function sendDmFile(userId: string, opts: DmFileOpts): Promise<SentDmRef> {
+  const token = process.env.DISCORD_BOT_TOKEN
+  if (!token) throw new Error('DISCORD_BOT_TOKEN must be set')
+
+  const channelRes = await fetch(`${DISCORD_API}/users/@me/channels`, {
+    method: 'POST',
+    headers: { Authorization: `Bot ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ recipient_id: userId }),
+  })
+  if (!channelRes.ok) throw new Error(`Discord open DM ${channelRes.status}: ${await channelRes.text()}`)
+  const channel = await channelRes.json() as { id: string }
+
+  const form = new FormData()
+  form.append('payload_json', JSON.stringify({
+    content: opts.content,
+    attachments: [{ id: 0, filename: opts.filename }],
+  }))
+  form.append('files[0]', new Blob([opts.data], { type: opts.contentType }), opts.filename)
+
+  const msgRes = await fetch(`${DISCORD_API}/channels/${channel.id}/messages`, {
+    method: 'POST',
+    headers: { Authorization: `Bot ${token}` },
+    body: form,
+  })
+  if (!msgRes.ok) throw new Error(`Discord DM file send ${msgRes.status}: ${await msgRes.text()}`)
+  const msg = await msgRes.json() as { id: string }
+  return { channelId: channel.id, messageId: msg.id }
+}
+
 export async function sendTypingIndicator(channelId: string): Promise<void> {
   await fetch(`${DISCORD_API}/channels/${channelId}/typing`, {
     method: 'POST',
