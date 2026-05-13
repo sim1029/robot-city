@@ -1,6 +1,7 @@
 import { Client, Events, GatewayIntentBits, ChannelType } from 'discord.js'
 import { handleApprovalInteraction, handleEditModalSubmit, handleThreadArchive, handleThreadMessage } from './handlers'
 import { getResolvedForumId, resolveForumChannel } from './forum'
+import { handleSlashCommand, registerGuildSlashCommands } from './slash_commands'
 
 export interface BotHandle {
   client: Client
@@ -26,6 +27,15 @@ export async function startBot(): Promise<BotHandle> {
   console.log(`[discord] forum "${resolved.forumName}" resolved to ${resolved.forumId} in guild ${resolved.guildId}`)
 
   const client = createBot()
+
+  client.once(Events.ClientReady, async (ready) => {
+    try {
+      await registerGuildSlashCommands(ready.application.id, resolved.guildId)
+      console.log(`[discord] slash commands registered in guild ${resolved.guildId}`)
+    } catch (err) {
+      console.error('[discord] slash command registration failed:', err)
+    }
+  })
 
   client.on(Events.MessageCreate, async (msg) => {
     if (msg.author.bot) return
@@ -58,6 +68,21 @@ export async function startBot(): Promise<BotHandle> {
   })
 
   client.on(Events.InteractionCreate, async (interaction) => {
+    if (interaction.isChatInputCommand()) {
+      try {
+        const result = handleSlashCommand({
+          name: interaction.commandName,
+          userId: interaction.user.id,
+        })
+        await interaction.reply({ content: result.content, ephemeral: true })
+      } catch (err) {
+        console.error('slash command error', err)
+        if (!interaction.replied && !interaction.deferred) {
+          await interaction.reply({ content: `Error: ${err instanceof Error ? err.message : String(err)}`, ephemeral: true })
+        }
+      }
+      return
+    }
     if (interaction.isButton()) {
       try {
         const outcome = await handleApprovalInteraction({

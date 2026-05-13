@@ -39,6 +39,11 @@ export function getResolvedForumId(): string {
   return cached.forumId
 }
 
+export function getResolvedGuildId(): string {
+  if (!cached) throw new Error('Forum not resolved yet — call resolveForumChannel() during startup.')
+  return cached.guildId
+}
+
 export function _resetResolvedForumForTests() {
   cached = null
 }

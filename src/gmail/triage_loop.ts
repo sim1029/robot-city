@@ -5,6 +5,7 @@ import { sendApprovalCardForApproval } from '../discord/handlers'
 import { sendDm } from '../discord/dm'
 import { isPersonEmail, extractAddress, extractDisplayName } from '../contacts/filter'
 import { upsertContact } from '../contacts/client'
+import { isPaused } from '../system/pause'
 
 export interface TriageTickInput {
   gmailUserId: string
@@ -12,13 +13,16 @@ export interface TriageTickInput {
 }
 
 export interface TriageTickResult {
-  pollKind: 'baselined' | 'synced' | 'gap-recovered'
+  pollKind: 'baselined' | 'synced' | 'gap-recovered' | 'paused'
   triaged: number
   notified: number
   approvalsRequested: number
 }
 
 export async function runTriageTick(input: TriageTickInput): Promise<TriageTickResult> {
+  if (isPaused()) {
+    return { pollKind: 'paused', triaged: 0, notified: 0, approvalsRequested: 0 }
+  }
   const poll = await pollGmail(input.gmailUserId)
   let triaged = 0
   let notified = 0
