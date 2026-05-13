@@ -2,9 +2,13 @@ import type { LLMRequest, LLMResponse } from './types'
 
 export async function callOpenAI(req: LLMRequest, apiKey: string): Promise<LLMResponse> {
   const start = Date.now()
-  const messages: Array<{ role: string; content: string }> = req.system
-    ? [{ role: 'system', content: req.system }, ...req.messages]
-    : [...req.messages]
+  const toStr = (c: typeof req.messages[0]['content']): string =>
+    typeof c === 'string' ? c : c.filter(b => b.type === 'text').map(b => (b as { type: 'text'; text: string }).text).join('\n')
+
+  const messages: Array<{ role: string; content: string }> = [
+    ...(req.system ? [{ role: 'system', content: req.system }] : []),
+    ...req.messages.map(m => ({ role: m.role, content: toStr(m.content) })),
+  ]
 
   const res = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',

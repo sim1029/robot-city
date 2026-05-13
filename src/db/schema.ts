@@ -98,6 +98,53 @@ export function migrate() {
   `)
   db.run('CREATE INDEX IF NOT EXISTS idx_admin_sessions_expires ON admin_sessions(expires_at)')
 
+  db.run(`
+    CREATE TABLE IF NOT EXISTS contacts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      email TEXT UNIQUE NOT NULL,
+      name TEXT NOT NULL DEFAULT '',
+      aliases TEXT NOT NULL DEFAULT '',
+      source TEXT NOT NULL DEFAULT 'email',
+      last_seen_at INTEGER,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+    )
+  `)
+
+  db.run(`
+    CREATE VIRTUAL TABLE IF NOT EXISTS contacts_fts USING fts5(
+      email, name, aliases,
+      content=contacts,
+      content_rowid=id
+    )
+  `)
+
+  db.run(`
+    CREATE TRIGGER IF NOT EXISTS contacts_fts_insert
+    AFTER INSERT ON contacts BEGIN
+      INSERT INTO contacts_fts(rowid, email, name, aliases)
+      VALUES (new.id, new.email, new.name, new.aliases);
+    END
+  `)
+
+  db.run(`
+    CREATE TRIGGER IF NOT EXISTS contacts_fts_update
+    AFTER UPDATE ON contacts BEGIN
+      INSERT INTO contacts_fts(contacts_fts, rowid, email, name, aliases)
+      VALUES ('delete', old.id, old.email, old.name, old.aliases);
+      INSERT INTO contacts_fts(rowid, email, name, aliases)
+      VALUES (new.id, new.email, new.name, new.aliases);
+    END
+  `)
+
+  db.run(`
+    CREATE TRIGGER IF NOT EXISTS contacts_fts_delete
+    AFTER DELETE ON contacts BEGIN
+      INSERT INTO contacts_fts(contacts_fts, rowid, email, name, aliases)
+      VALUES ('delete', old.id, old.email, old.name, old.aliases);
+    END
+  `)
+
   const settingDefaults: Record<string, string> = {
     brief_morning_enabled: 'true',
     brief_morning_hour: '8',

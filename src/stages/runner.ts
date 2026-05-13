@@ -1,4 +1,5 @@
 import { callLLM } from '../providers/router'
+import type { ContentBlock } from '../providers/types'
 import type { StageName, StageConfig, StageResult, RunResult } from './types'
 import { db } from '../db/client'
 import { bumpSessionCost, ensureSession } from '../db/sessions'
@@ -17,16 +18,11 @@ const STAGE_DEFAULTS: Record<StageName, StageConfig> = {
   reason: {
     model: 'claude-sonnet-4-6',
     maxOutputTokens: 2000,
-    systemPrompt: "You are an AI life concierge with access to the following tools that execute automatically after your response: create_calendar_event, read_calendar, invite_attendees (requires user approval), send_email (requires user approval). When the user requests a calendar or email action, confirm you will do it — never say you can't access external services. The user's original message appears in context labeled [ORIGINAL MESSAGE]; ignore [CLASSIFY] and [CONTEXT] tags — those are internal pipeline state, not part of the conversation.",
-  },
-  act: {
-    model: 'claude-haiku-4-5-20251001',
-    maxOutputTokens: 300,
-    systemPrompt: 'Output a single JSON object: {"tool":"<name>","args":{...}}\nAvailable tools:\n- "none": no action needed\n- "create_calendar_event": {"title":string,"start":string (ISO8601),"end":string (ISO8601),"description"?:string,"location"?:string}\n- "invite_attendees": {"eventId":string,"emails":string[],"eventTitle"?:string}\n- "send_email": {"to":string,"subject":string,"body":string}\nOnly output JSON. No prose.',
+    systemPrompt: "You are an AI life concierge. Use the available tools to help the user — read_calendar and read_email return results immediately; invite_attendees and send_email require user approval. Never say you can't access external services. Ignore internal pipeline tags [ORIGINAL MESSAGE], [CLASSIFY], [CONTEXT] — they are metadata, not conversation.",
   },
 }
 
-export type StageInput = string | Array<{ role: 'user' | 'assistant'; content: string }>
+export type StageInput = string | Array<{ role: 'user' | 'assistant'; content: string | ContentBlock[] }>
 
 export async function runStage(
   stage: StageName,
@@ -42,6 +38,7 @@ export async function runStage(
     system: config.systemPrompt,
     messages,
     maxTokens: config.maxOutputTokens,
+    tools: config.tools,
   })
 
   const stageResult: StageResult = {
@@ -52,6 +49,7 @@ export async function runStage(
     model: result.model,
     costUsd: result.costUsd,
     latencyMs: result.latencyMs,
+    toolCalls: result.toolCalls,
   }
 
   if (sessionId) {
@@ -59,9 +57,10 @@ export async function runStage(
     bumpSessionCost(sessionId, result.costUsd)
   }
 
+  const lastContent = messages.at(-1)?.content
   const promptPreview = typeof input === 'string'
     ? input.slice(0, 300)
-    : (messages.at(-1)?.content ?? '').slice(0, 300)
+    : typeof lastContent === 'string' ? lastContent.slice(0, 300) : JSON.stringify(lastContent).slice(0, 300)
 
   db.run(
     `INSERT INTO events (session_id, type, model, input_tokens, output_tokens, cost_usd, latency_ms, payload, output)
@@ -82,12 +81,22 @@ export async function runStage(
   return stageResult
 }
 
+const MODEL_TIERS = ['haiku', 'sonnet', 'opus']
+
+function highestTierModel(models: string[]): string {
+  return models.reduce((best, m) => {
+    const mTier = MODEL_TIERS.findIndex(t => m.toLowerCase().includes(t))
+    const bestTier = MODEL_TIERS.findIndex(t => best.toLowerCase().includes(t))
+    return mTier > bestTier ? m : best
+  }, models[0] ?? 'unknown')
+}
+
 export function buildFooter(stages: StageResult[], sessionCostUsd?: number): string {
   const totalIn = stages.reduce((s, r) => s + r.inputTokens, 0)
   const totalOut = stages.reduce((s, r) => s + r.outputTokens, 0)
   const totalMs = stages.reduce((s, r) => s + r.latencyMs, 0)
   const totalCost = stages.reduce((s, r) => s + r.costUsd, 0)
-  const primaryModel = stages.at(-1)?.model ?? 'unknown'
+  const primaryModel = highestTierModel(stages.map(s => s.model))
 
   const lines = [
     '─────────────────────────────────',
