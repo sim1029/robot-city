@@ -13,7 +13,7 @@ export async function sendDbBackup(discordUserId: string): Promise<void> {
   const dbPath = resolveDbPath()
 
   if (!existsSync(dbPath)) {
-    await sendDm(discordUserId, { content: 'DB backup failed: database file not found.' })
+    await sendDm(discordUserId, { content: 'DB backup failed: database file not found.', components: [] })
     return
   }
 
@@ -27,7 +27,7 @@ export async function sendDbBackup(discordUserId: string): Promise<void> {
   ])
 
   if (exitCode !== 0) {
-    await sendDm(discordUserId, { content: 'DB backup failed: gzip exited with an error. Check server logs.' })
+    await sendDm(discordUserId, { content: 'DB backup failed: gzip exited with an error. Check server logs.', components: [] })
     return
   }
 
@@ -37,6 +37,7 @@ export async function sendDbBackup(discordUserId: string): Promise<void> {
     const sizeMb = (compressedSize / (1024 * 1024)).toFixed(1)
     await sendDm(discordUserId, {
       content: `DB backup too large to attach (${sizeMb} MB compressed, Discord limit 8 MB). Pull from Fly volume manually:\n\`\`\`\nflyctl ssh console -C "cp /data/robot-city.db /tmp/backup.db"\n\`\`\``,
+      components: [],
     })
     return
   }
