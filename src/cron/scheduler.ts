@@ -1,5 +1,6 @@
 import { getSetting } from '../db/settings'
 import { generateBrief, type BriefLabel } from '../workflows/morning_brief'
+import { sendDbBackup } from './db_backup'
 
 export interface SchedulerOpts {
   gmailUserId: string
@@ -44,6 +45,18 @@ export function startScheduler(opts: SchedulerOpts): () => void {
         firedToday.add(fireKey)
         generateBrief({ ...opts, label: config.label }).catch(err => {
           console.error(`[cron] ${config.label} brief failed:`, err)
+        })
+      }
+    }
+
+    const backupEnabled = getSetting('db_backup_enabled', 'true') === 'true'
+    if (backupEnabled) {
+      const backupHour = parseInt(getSetting('db_backup_hour', '3'), 10)
+      const backupFireKey = `db_backup:${dayKey}`
+      if (currentHour === backupHour && !firedToday.has(backupFireKey)) {
+        firedToday.add(backupFireKey)
+        sendDbBackup(opts.discordUserId).catch(err => {
+          console.error('[cron] db backup failed:', err)
         })
       }
     }
