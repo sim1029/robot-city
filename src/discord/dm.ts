@@ -15,7 +15,7 @@ export interface SentDmRef {
   messageId: string
 }
 
-export async function sendDm(userId: string, payload: DiscordMessagePayload): Promise<SentDmRef> {
+export async function openDmChannel(userId: string): Promise<string> {
   const channelRes = await fetch(`${DISCORD_API}/users/@me/channels`, {
     method: 'POST',
     headers: authHeaders(),
@@ -23,15 +23,20 @@ export async function sendDm(userId: string, payload: DiscordMessagePayload): Pr
   })
   if (!channelRes.ok) throw new Error(`Discord open DM ${channelRes.status}: ${await channelRes.text()}`)
   const channel = await channelRes.json() as { id: string }
+  return channel.id
+}
 
-  const msgRes = await fetch(`${DISCORD_API}/channels/${channel.id}/messages`, {
+export async function sendDm(userId: string, payload: DiscordMessagePayload): Promise<SentDmRef> {
+  const channelId = await openDmChannel(userId)
+
+  const msgRes = await fetch(`${DISCORD_API}/channels/${channelId}/messages`, {
     method: 'POST',
     headers: authHeaders(),
     body: JSON.stringify(payload),
   })
   if (!msgRes.ok) throw new Error(`Discord DM send ${msgRes.status}: ${await msgRes.text()}`)
   const msg = await msgRes.json() as { id: string }
-  return { channelId: channel.id, messageId: msg.id }
+  return { channelId, messageId: msg.id }
 }
 
 export async function editChannelMessage(channelId: string, messageId: string, payload: DiscordMessagePayload): Promise<void> {
