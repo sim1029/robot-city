@@ -106,4 +106,20 @@ describe('session cost accumulation', () => {
     const footer = buildFooter([stage])
     expect(footer).not.toContain('session $')
   })
+
+  test('only the most recent 100 stage events keep payload/output', async () => {
+    mockAnthropicHaiku('bulk', false)
+    for (let i = 0; i < 105; i++) {
+      await runStage('classify', `prompt-${i}`, 'sess-trim')
+    }
+    const counts = db.query(
+      `SELECT
+        SUM(CASE WHEN payload IS NOT NULL THEN 1 ELSE 0 END) AS payload_kept,
+        SUM(CASE WHEN output IS NOT NULL THEN 1 ELSE 0 END) AS output_kept
+       FROM events
+       WHERE type LIKE 'stage:%'`
+    ).get() as { payload_kept: number; output_kept: number }
+    expect(counts.payload_kept).toBe(100)
+    expect(counts.output_kept).toBe(100)
+  })
 })

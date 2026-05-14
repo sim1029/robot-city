@@ -1,7 +1,7 @@
-import { db } from '../db/client'
 import { sendMessage } from '../gmail/client'
 import { getValidGmailAccessToken } from '../gmail/tokens'
 import { createApproval, registerApprovalHandler, type Approval } from '../approvals/state'
+import { insertEvent } from '../db/events'
 
 export interface SendEmailArgs {
   to: string
@@ -32,20 +32,16 @@ export function registerSendEmailTool(gmailUserId: string): void {
     validateArgs(args)
     const accessToken = await getValidGmailAccessToken(gmailUserId)
     const result = await sendMessage(accessToken, args)
-    db.run(
-      `INSERT INTO events (session_id, type, payload) VALUES (?, ?, ?)`,
-      [
-        approval.session_id,
-        'tool:send_email',
-        JSON.stringify({
-          approval_id: approval.id,
-          to: args.to,
-          subject: args.subject,
-          gmail_id: result.id,
-          gmail_thread_id: result.threadId,
-        }),
-      ]
-    )
+    insertEvent({
+      sessionId: approval.session_id,
+      type: 'tool:send_email',
+      payload: JSON.stringify({
+        approval_id: approval.id,
+        to: args.to,
+        subject: args.subject,
+      }),
+      output: JSON.stringify({ success: true, gmail_id: result.id, gmail_thread_id: result.threadId }),
+    })
     return result
   })
 }

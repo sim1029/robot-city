@@ -1,7 +1,7 @@
-import { db } from '../db/client'
 import { patchAttendees } from '../calendar/client'
 import { getValidGmailAccessToken } from '../gmail/tokens'
 import { createApproval, registerApprovalHandler, type Approval } from '../approvals/state'
+import { insertEvent } from '../db/events'
 
 export interface InviteAttendeesArgs {
   eventId: string
@@ -27,18 +27,17 @@ export function registerInviteAttendeesTool(gmailUserId: string): void {
     validateArgs(args)
     const accessToken = await getValidGmailAccessToken(gmailUserId)
     const event = await patchAttendees(accessToken, args.eventId, args.emails)
-    db.run(
-      `INSERT INTO events (session_id, type, payload) VALUES (?, ?, ?)`,
-      [
-        approval.session_id,
-        'tool:invite_attendees',
-        JSON.stringify({
-          approval_id: approval.id,
-          event_id: args.eventId,
-          emails: args.emails,
-        }),
-      ]
-    )
+    insertEvent({
+      sessionId: approval.session_id,
+      type: 'tool:invite_attendees',
+      payload: JSON.stringify({
+        approval_id: approval.id,
+        event_id: args.eventId,
+        event_title: args.eventTitle,
+        emails: args.emails,
+      }),
+      output: JSON.stringify({ success: true, attendee_count: event.attendees?.length ?? 0 }),
+    })
     return { eventId: event.id, attendees: event.attendees?.map(a => a.email) }
   })
 }

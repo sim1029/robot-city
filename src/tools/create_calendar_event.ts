@@ -1,7 +1,7 @@
-import { db } from '../db/client'
 import { createEvent } from '../calendar/client'
 import { getValidGmailAccessToken } from '../gmail/tokens'
 import { getSetting } from '../db/settings'
+import { insertEvent } from '../db/events'
 
 export interface CreateEventArgs {
   title: string
@@ -29,14 +29,12 @@ export async function createCalendarEvent(
     attendees: args.attendees?.map(email => ({ email })),
   })
 
-  db.run(
-    `INSERT INTO events (session_id, type, payload) VALUES (?, ?, ?)`,
-    [
-      ctx.sessionId ?? null,
-      'tool:create_calendar_event',
-      JSON.stringify({ event_id: event.id, title: args.title, start: args.start }),
-    ]
-  )
+  insertEvent({
+    sessionId: ctx.sessionId ?? null,
+    type: 'tool:create_calendar_event',
+    payload: JSON.stringify({ title: args.title, start: args.start, end: args.end, attendees: args.attendees ?? [] }),
+    output: JSON.stringify({ success: true, event_id: event.id }),
+  })
 
   const dateStr = formatEventDate(args.start)
   return `Created event: **${args.title}** on ${dateStr}${event.htmlLink ? ` — [view in Google Calendar](${event.htmlLink})` : ''}`
