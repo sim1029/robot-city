@@ -66,7 +66,7 @@ describe('createCalendarEvent', () => {
 
     await createCalendarEvent(
       { title: 'Golf with Trevor and Harry', start: '2026-06-20T10:00:00', end: '2026-06-20T14:00:00' },
-      { gmailUserId: USER, sessionId: 's1' }
+      { gmailUserId: USER, sessionId: null }
     )
 
     const call = fetchCalls().find(c => c.method === 'POST')

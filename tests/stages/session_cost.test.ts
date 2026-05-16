@@ -27,7 +27,9 @@ describe('session cost accumulation', () => {
     installFetchMock()
   })
   beforeEach(() => {
+    // Clear child tables before sessions — pending_approvals.session_id FKs sessions(id).
     db.run('DELETE FROM events')
+    db.run('DELETE FROM pending_approvals')
     db.run('DELETE FROM sessions')
   })
   afterEach(() => resetFetchMock())
