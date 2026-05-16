@@ -22,8 +22,8 @@ export async function createCalendarEvent(
 
   const event = await createEvent(accessToken, {
     summary: args.title,
-    start: { dateTime: args.start, timeZone: timezone },
-    end: { dateTime: args.end, timeZone: timezone },
+    start: { dateTime: withOffset(args.start, timezone), timeZone: timezone },
+    end: { dateTime: withOffset(args.end, timezone), timeZone: timezone },
     description: args.description,
     location: args.location,
     attendees: args.attendees?.map(email => ({ email })),
@@ -52,4 +52,17 @@ function formatEventDate(iso: string): string {
   } catch {
     return iso
   }
+}
+
+// Google Calendar interprets naive `dateTime` strings (no offset) inconsistently when only
+// `timeZone` is supplied — events land 1 hour off across DST boundaries. Append a DST-aware
+// offset computed from the event's own date so the wire payload is unambiguous RFC 3339.
+export function withOffset(localIso: string, timeZone: string): string {
+  if (/(Z|[+-]\d{2}:?\d{2})$/.test(localIso)) return localIso
+  const utc = new Date(`${localIso}Z`)
+  if (isNaN(utc.getTime())) return localIso
+  const parts = new Intl.DateTimeFormat('en-US', { timeZone, timeZoneName: 'longOffset' }).formatToParts(utc)
+  const name = parts.find(p => p.type === 'timeZoneName')?.value ?? 'GMT'
+  const offset = name.replace('GMT', '') || '+00:00'
+  return `${localIso}${offset}`
 }
