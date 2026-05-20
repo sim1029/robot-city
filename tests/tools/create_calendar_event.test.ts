@@ -33,6 +33,30 @@ describe('withOffset', () => {
     expect(withOffset('2026-06-20T10:00:00', 'America/Phoenix')).toBe('2026-06-20T10:00:00-07:00')
     expect(withOffset('2026-01-20T10:00:00', 'America/Phoenix')).toBe('2026-01-20T10:00:00-07:00')
   })
+
+  // DST starts in NY on 2026-03-08 at 02:00 EST -> 03:00 EDT. The naive UTC-parse
+  // approach picks the EST offset for these morning wall times because the instant
+  // parsed as UTC still falls before the transition; verify the wall-time-resolving
+  // logic picks EDT instead.
+  test('spring-forward: wall time after the gap resolves to EDT (-04:00)', () => {
+    expect(withOffset('2026-03-08T03:30:00', 'America/New_York')).toBe('2026-03-08T03:30:00-04:00')
+    expect(withOffset('2026-03-08T06:00:00', 'America/New_York')).toBe('2026-03-08T06:00:00-04:00')
+  })
+
+  test('spring-forward: wall time before the gap stays on EST (-05:00)', () => {
+    expect(withOffset('2026-03-08T01:00:00', 'America/New_York')).toBe('2026-03-08T01:00:00-05:00')
+  })
+
+  // DST ends in NY on 2026-11-01 at 02:00 EDT -> 01:00 EST. Wall times at/after the
+  // fall-back should resolve to EST (-05:00); times before stay on EDT (-04:00).
+  test('fall-back: wall time after the repeat resolves to EST (-05:00)', () => {
+    expect(withOffset('2026-11-01T02:30:00', 'America/New_York')).toBe('2026-11-01T02:30:00-05:00')
+    expect(withOffset('2026-11-01T05:00:00', 'America/New_York')).toBe('2026-11-01T05:00:00-05:00')
+  })
+
+  test('fall-back: wall time before the repeat stays on EDT (-04:00)', () => {
+    expect(withOffset('2026-11-01T00:30:00', 'America/New_York')).toBe('2026-11-01T00:30:00-04:00')
+  })
 })
 
 describe('createCalendarEvent', () => {

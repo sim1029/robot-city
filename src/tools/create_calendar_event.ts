@@ -56,13 +56,36 @@ function formatEventDate(iso: string): string {
 
 // Google Calendar interprets naive `dateTime` strings (no offset) inconsistently when only
 // `timeZone` is supplied — events land 1 hour off across DST boundaries. Append a DST-aware
-// offset computed from the event's own date so the wire payload is unambiguous RFC 3339.
+// offset computed from the wall time so the wire payload is unambiguous RFC 3339.
+//
+// We need the offset that applies to the *intended local wall time*, not to the instant
+// you get by reinterpreting that string as UTC. On a DST transition day those two instants
+// straddle the boundary, so a single lookup picks the wrong offset (e.g. 2026-03-08T03:30
+// in America/New_York would resolve to -05:00 instead of -04:00). One iteration fixes it:
+// use the first offset to back out a corrected UTC instant, then re-query.
 export function withOffset(localIso: string, timeZone: string): string {
   if (/(Z|[+-]\d{2}:?\d{2})$/.test(localIso)) return localIso
-  const utc = new Date(`${localIso}Z`)
-  if (isNaN(utc.getTime())) return localIso
-  const parts = new Intl.DateTimeFormat('en-US', { timeZone, timeZoneName: 'longOffset' }).formatToParts(utc)
+  const asUtcMs = new Date(`${localIso}Z`).getTime()
+  if (isNaN(asUtcMs)) return localIso
+  const guess = offsetMsAt(asUtcMs, timeZone)
+  const resolved = offsetMsAt(asUtcMs - guess, timeZone)
+  return `${localIso}${formatOffset(resolved)}`
+}
+
+function offsetMsAt(instantMs: number, timeZone: string): number {
+  const parts = new Intl.DateTimeFormat('en-US', { timeZone, timeZoneName: 'longOffset' }).formatToParts(new Date(instantMs))
   const name = parts.find(p => p.type === 'timeZoneName')?.value ?? 'GMT'
-  const offset = name.replace('GMT', '') || '+00:00'
-  return `${localIso}${offset}`
+  const raw = name.replace('GMT', '') || '+00:00'
+  const m = /([+-])(\d{2}):?(\d{2})/.exec(raw)
+  if (!m) return 0
+  const sign = m[1] === '+' ? 1 : -1
+  return sign * (parseInt(m[2], 10) * 60 + parseInt(m[3], 10)) * 60_000
+}
+
+function formatOffset(ms: number): string {
+  const sign = ms < 0 ? '-' : '+'
+  const abs = Math.abs(ms)
+  const hh = String(Math.floor(abs / 3_600_000)).padStart(2, '0')
+  const mm = String(Math.floor((abs % 3_600_000) / 60_000)).padStart(2, '0')
+  return `${sign}${hh}:${mm}`
 }
