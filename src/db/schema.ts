@@ -153,6 +153,7 @@ export function migrate() {
     brief_evening_enabled: 'false',
     brief_evening_hour: '18',
     timezone: 'UTC',
+    default_calendar_id: 'primary',
     db_backup_enabled: 'true',
     db_backup_hour: '3',
   }

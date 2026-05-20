@@ -268,7 +268,7 @@ form select:focus {
   box-shadow: 0 0 0 3px rgba(117, 194, 246, 0.25);
 }
 form input[type="checkbox"] { margin-right: 8px; accent-color: var(--sky); }
-form select { max-width: 200px; }
+form select { max-width: 480px; }
 
 .actions { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
 .row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }

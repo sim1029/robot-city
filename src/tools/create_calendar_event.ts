@@ -1,6 +1,7 @@
 import { createEvent } from '../calendar/client'
 import { getValidGmailAccessToken } from '../gmail/tokens'
 import { getSetting } from '../db/settings'
+import { getDefaultCalendarId, PRIMARY_CALENDAR_ID } from '../calendar/defaults'
 import { insertEvent } from '../db/events'
 
 export interface CreateEventArgs {
@@ -10,6 +11,7 @@ export interface CreateEventArgs {
   description?: string
   location?: string
   attendees?: string[]
+  calendarId?: string
 }
 
 export async function createCalendarEvent(
@@ -19,6 +21,7 @@ export async function createCalendarEvent(
   validateArgs(args)
   const accessToken = await getValidGmailAccessToken(ctx.gmailUserId)
   const timezone = getSetting('timezone', 'UTC')
+  const calendarId = args.calendarId?.trim() || getDefaultCalendarId()
 
   const event = await createEvent(accessToken, {
     summary: args.title,
@@ -27,17 +30,24 @@ export async function createCalendarEvent(
     description: args.description,
     location: args.location,
     attendees: args.attendees?.map(email => ({ email })),
-  })
+  }, { calendarId })
 
   insertEvent({
     sessionId: ctx.sessionId ?? null,
     type: 'tool:create_calendar_event',
-    payload: JSON.stringify({ title: args.title, start: args.start, end: args.end, attendees: args.attendees ?? [] }),
-    output: JSON.stringify({ success: true, event_id: event.id }),
+    payload: JSON.stringify({
+      title: args.title,
+      start: args.start,
+      end: args.end,
+      attendees: args.attendees ?? [],
+      calendar_id: calendarId,
+    }),
+    output: JSON.stringify({ success: true, event_id: event.id, calendar_id: calendarId }),
   })
 
   const dateStr = formatEventDate(args.start)
-  return `Created event: **${args.title}** on ${dateStr}${event.htmlLink ? ` — [view in Google Calendar](${event.htmlLink})` : ''}`
+  const calendarNote = calendarId !== PRIMARY_CALENDAR_ID ? ` on calendar \`${calendarId}\`` : ''
+  return `Created event: **${args.title}** on ${dateStr}${calendarNote}${event.htmlLink ? ` — [view in Google Calendar](${event.htmlLink})` : ''}`
 }
 
 function validateArgs(args: CreateEventArgs): void {
@@ -55,13 +65,12 @@ function formatEventDate(iso: string): string {
 }
 
 // Google Calendar interprets naive `dateTime` strings (no offset) inconsistently when only
-// `timeZone` is supplied — events land 1 hour off across DST boundaries. Append a DST-aware
+// `timeZone` is supplied - events land 1 hour off across DST boundaries. Append a DST-aware
 // offset computed from the wall time so the wire payload is unambiguous RFC 3339.
 //
-// We need the offset that applies to the *intended local wall time*, not to the instant
+// We need the offset that applies to the intended local wall time, not to the instant
 // you get by reinterpreting that string as UTC. On a DST transition day those two instants
-// straddle the boundary, so a single lookup picks the wrong offset (e.g. 2026-03-08T03:30
-// in America/New_York would resolve to -05:00 instead of -04:00). One iteration fixes it:
+// straddle the boundary, so a single lookup picks the wrong offset. One iteration fixes it:
 // use the first offset to back out a corrected UTC instant, then re-query.
 export function withOffset(localIso: string, timeZone: string): string {
   if (/(Z|[+-]\d{2}:?\d{2})$/.test(localIso)) return localIso

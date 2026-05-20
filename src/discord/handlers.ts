@@ -16,6 +16,7 @@ import { isPaused } from '../system/pause'
 import { computeSessionStats, getSessionCost, markSessionClosed } from '../db/sessions'
 import { db } from '../db/client'
 import type { ContentBlock, ToolDefinition } from '../providers/types'
+import { formatCalendarList, listWritableCalendarsForUser } from '../calendar/defaults'
 
 export { sendApprovalCardForApproval }
 
@@ -47,6 +48,10 @@ const FORUM_TOOLS: ToolDefinition[] = [
         end: { type: 'string', description: 'ISO8601 datetime' },
         description: { type: 'string' },
         location: { type: 'string' },
+        calendarId: {
+          type: 'string',
+          description: 'Google Calendar ID to create the event on. Use this only when the user explicitly names a calendar from AVAILABLE CALENDARS.',
+        },
       },
       required: ['title', 'start', 'end'],
     },
@@ -60,6 +65,10 @@ const FORUM_TOOLS: ToolDefinition[] = [
         eventId: { type: 'string' },
         emails: { type: 'array', items: { type: 'string' } },
         eventTitle: { type: 'string' },
+        calendarId: {
+          type: 'string',
+          description: 'Google Calendar ID containing the event. Use the calendarId returned by create_calendar_event when inviting attendees to a newly-created non-primary calendar event.',
+        },
       },
       required: ['eventId', 'emails'],
     },
@@ -99,6 +108,19 @@ function currentDateHeader(): string {
     timeZoneName: 'short',
   }).format(now)
   return `[CURRENT DATE AND TIME]\n${formatted}`
+}
+
+async function availableCalendarsContext(gmailUserId: string): Promise<string> {
+  try {
+    const calendars = await listWritableCalendarsForUser(gmailUserId)
+    return [
+      '[AVAILABLE CALENDARS]',
+      'If the user explicitly names one of these calendars, pass its ID as create_calendar_event.calendarId. Otherwise omit calendarId and the saved default calendar will be used.',
+      formatCalendarList(calendars),
+    ].join('\n')
+  } catch (err) {
+    return `[AVAILABLE CALENDARS]\nUnable to list writable calendars. If calendar selection is needed, ask the owner to reconnect Google at /auth/google. Error: ${err instanceof Error ? err.message : String(err)}`
+  }
 }
 
 export type InteractionOutcome =
@@ -209,6 +231,9 @@ export async function handleThreadMessage(args: {
   const gatherData = gmailUserId
     ? await gatherForIntent(classifyResult.text, gmailUserId).catch(() => '')
     : ''
+  const calendarContext = gmailUserId
+    ? await availableCalendarsContext(gmailUserId)
+    : ''
 
   const dateHeader = currentDateHeader()
 
@@ -217,6 +242,7 @@ export async function handleThreadMessage(args: {
     `[ORIGINAL MESSAGE]\n${args.content}`,
     `[CLASSIFY]\n${classifyResult.text}`,
     gatherData ? `[CONTEXT]\n${gatherData}` : '',
+    calendarContext,
   ].filter(Boolean).join('\n\n')
 
   // Agentic tool loop — reason stage calls tools natively; we execute and feed results back
