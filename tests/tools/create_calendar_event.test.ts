@@ -34,10 +34,6 @@ describe('withOffset', () => {
     expect(withOffset('2026-01-20T10:00:00', 'America/Phoenix')).toBe('2026-01-20T10:00:00-07:00')
   })
 
-  // DST starts in NY on 2026-03-08 at 02:00 EST -> 03:00 EDT. The naive UTC-parse
-  // approach picks the EST offset for these morning wall times because the instant
-  // parsed as UTC still falls before the transition; verify the wall-time-resolving
-  // logic picks EDT instead.
   test('spring-forward: wall time after the gap resolves to EDT (-04:00)', () => {
     expect(withOffset('2026-03-08T03:30:00', 'America/New_York')).toBe('2026-03-08T03:30:00-04:00')
     expect(withOffset('2026-03-08T06:00:00', 'America/New_York')).toBe('2026-03-08T06:00:00-04:00')
@@ -47,8 +43,6 @@ describe('withOffset', () => {
     expect(withOffset('2026-03-08T01:00:00', 'America/New_York')).toBe('2026-03-08T01:00:00-05:00')
   })
 
-  // DST ends in NY on 2026-11-01 at 02:00 EDT -> 01:00 EST. Wall times at/after the
-  // fall-back should resolve to EST (-05:00); times before stay on EDT (-04:00).
   test('fall-back: wall time after the repeat resolves to EST (-05:00)', () => {
     expect(withOffset('2026-11-01T02:30:00', 'America/New_York')).toBe('2026-11-01T02:30:00-05:00')
     expect(withOffset('2026-11-01T05:00:00', 'America/New_York')).toBe('2026-11-01T05:00:00-05:00')
@@ -67,6 +61,7 @@ describe('createCalendarEvent', () => {
     migrate()
     installFetchMock()
   })
+
   beforeEach(() => {
     db.run('DELETE FROM gmail_tokens')
     db.run('DELETE FROM events')
@@ -76,9 +71,10 @@ describe('createCalendarEvent', () => {
       access_token: 'A',
       refresh_token: 'R',
       expires_at: Date.now() + 3_600_000,
-      scope: 'gmail.modify',
+      scope: 'calendar.events',
     })
   })
+
   afterEach(() => resetFetchMock())
   afterAll(() => uninstallFetchMock())
 
@@ -133,5 +129,40 @@ describe('createCalendarEvent', () => {
     const body = call!.bodyJson() as { start: { dateTime: string }; end: { dateTime: string } }
     expect(body.start.dateTime).toBe('2026-06-20T10:00:00-04:00')
     expect(body.end.dateTime).toBe('2026-06-20T14:00:00-04:00')
+  })
+
+  test('uses saved default calendar when calendarId is omitted', async () => {
+    db.run("INSERT INTO user_settings (key, value) VALUES ('default_calendar_id', 'team@example.com')")
+    mockFetch(/calendars\/team%40example.com\/events$/, {
+      json: { id: 'evt-4', summary: 'Planning', htmlLink: 'https://calendar.google.com/event?eid=4' },
+    })
+
+    const result = await createCalendarEvent(
+      { title: 'Planning', start: '2026-05-15T10:00:00Z', end: '2026-05-15T10:30:00Z' },
+      { gmailUserId: USER, sessionId: null }
+    )
+
+    expect(result).toContain('team@example.com')
+    expect(fetchCalls()[0].url).toContain('/calendars/team%40example.com/events')
+
+    const ev = db.query("SELECT payload FROM events WHERE type = 'tool:create_calendar_event'").get() as { payload: string }
+    expect(JSON.parse(ev.payload).calendar_id).toBe('team@example.com')
+  })
+
+  test('explicit calendarId overrides saved default', async () => {
+    db.run("INSERT INTO user_settings (key, value) VALUES ('default_calendar_id', 'team@example.com')")
+    mockFetch(/calendars\/side%40example.com\/events$/, { json: { id: 'evt-5', summary: 'Focus' } })
+
+    await createCalendarEvent(
+      {
+        title: 'Focus',
+        start: '2026-05-15T11:00:00Z',
+        end: '2026-05-15T12:00:00Z',
+        calendarId: 'side@example.com',
+      },
+      { gmailUserId: USER, sessionId: null }
+    )
+
+    expect(fetchCalls()[0].url).toContain('/calendars/side%40example.com/events')
   })
 })

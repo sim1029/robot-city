@@ -70,9 +70,11 @@ export async function startBot(): Promise<BotHandle> {
   client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.isChatInputCommand()) {
       try {
-        const result = handleSlashCommand({
+        const result = await handleSlashCommand({
           name: interaction.commandName,
           userId: interaction.user.id,
+          subcommand: interaction.options.getSubcommand(false),
+          calendar: interaction.options.getString('calendar', false),
         })
         await interaction.reply({ content: result.content, ephemeral: true })
       } catch (err) {

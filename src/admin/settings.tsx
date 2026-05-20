@@ -2,6 +2,9 @@ import { Hono } from 'hono'
 import { getAllSettings, setSetting } from '../db/settings'
 import { Layout } from './components/Layout'
 import { renderPage, renderFragment } from './render'
+import { db } from '../db/client'
+import { formatCalendarLabel, listWritableCalendarsForUser, PRIMARY_CALENDAR_ID } from '../calendar/defaults'
+import type { CalendarListEntry } from '../calendar/client'
 
 type FieldType = 'text' | 'bool' | 'number'
 
@@ -49,13 +52,57 @@ function FieldRow({ field, value }: FieldRowProps) {
 interface SettingsPageProps {
   csrfToken: string
   settings: Record<string, string>
+  calendars: CalendarListEntry[]
+  calendarError?: string
 }
 
-function SettingsPage({ csrfToken, settings }: SettingsPageProps) {
+function CalendarField({
+  value,
+  calendars,
+  error,
+}: {
+  value: string
+  calendars: CalendarListEntry[]
+  error?: string
+}) {
+  const options = [
+    { id: PRIMARY_CALENDAR_ID, summary: 'Primary calendar', primary: true },
+    ...calendars.filter((c) => c.id !== PRIMARY_CALENDAR_ID),
+  ]
+
+  if (calendars.length === 0) {
+    return (
+      <div className="field">
+        <label htmlFor="f-default_calendar_id">Default calendar for new events</label>
+        <input id="f-default_calendar_id" type="text" name="default_calendar_id" defaultValue={value || PRIMARY_CALENDAR_ID} />
+        {error ? <p className="field-help status-err">{error}</p> : <p className="field-help">Connect Google to choose from writable calendars.</p>}
+      </div>
+    )
+  }
+
+  return (
+    <div className="field">
+      <label htmlFor="f-default_calendar_id">Default calendar for new events</label>
+      <select id="f-default_calendar_id" name="default_calendar_id" defaultValue={value || PRIMARY_CALENDAR_ID}>
+        {options.map((calendar) => (
+          <option key={calendar.id} value={calendar.id}>{`${formatCalendarLabel(calendar)} (${calendar.id})`}</option>
+        ))}
+      </select>
+      {error ? <p className="field-help status-err">{error}</p> : null}
+    </div>
+  )
+}
+
+function SettingsPage({ csrfToken, settings, calendars, calendarError }: SettingsPageProps) {
   return (
     <Layout title="Settings" csrfToken={csrfToken} currentPath="/admin/settings">
       <h2>Settings</h2>
       <form hx-post="/admin/settings" hx-target="#save-status" hx-swap="innerHTML">
+        <CalendarField
+          value={settings.default_calendar_id ?? PRIMARY_CALENDAR_ID}
+          calendars={calendars}
+          error={calendarError}
+        />
         {SETTING_FIELDS.map((f) => (
           <FieldRow key={f.key} field={f} value={settings[f.key] ?? ''} />
         ))}
@@ -70,14 +117,22 @@ function SettingsPage({ csrfToken, settings }: SettingsPageProps) {
 
 export const settingsRoutes = new Hono()
 
-settingsRoutes.get('/', (c) => {
+settingsRoutes.get('/', async (c) => {
   const csrfToken = c.get('csrf_token') as string
   const settings = getAllSettings()
-  return c.html(renderPage(<SettingsPage csrfToken={csrfToken} settings={settings} />))
+  const { calendars, error } = await loadWritableCalendars()
+  return c.html(renderPage(<SettingsPage csrfToken={csrfToken} settings={settings} calendars={calendars} calendarError={error} />))
 })
 
 settingsRoutes.post('/', async (c) => {
   const form = await c.req.formData()
+  const defaultCalendar = String(form.get('default_calendar_id') ?? PRIMARY_CALENDAR_ID).trim() || PRIMARY_CALENDAR_ID
+  const validation = await validateDefaultCalendar(defaultCalendar)
+  if (!validation.ok) {
+    return c.html(renderFragment(<span className="status-err">{validation.error}</span>))
+  }
+  setSetting('default_calendar_id', defaultCalendar)
+
   let count = 0
   for (const f of SETTING_FIELDS) {
     if (f.type === 'bool') {
@@ -92,5 +147,39 @@ settingsRoutes.post('/', async (c) => {
       }
     }
   }
-  return c.html(renderFragment(<span className="status-ok">{`Saved ${count} settings.`}</span>))
+  return c.html(renderFragment(<span className="status-ok">{`Saved ${count + 1} settings.`}</span>))
 })
+
+async function loadWritableCalendars(): Promise<{ calendars: CalendarListEntry[]; error?: string }> {
+  const gmailRow = db.query('SELECT user_id FROM gmail_tokens LIMIT 1').get() as { user_id: string } | null
+  if (!gmailRow) return { calendars: [] }
+
+  try {
+    return { calendars: await listWritableCalendarsForUser(gmailRow.user_id) }
+  } catch (err) {
+    return {
+      calendars: [],
+      error: `Unable to list calendars. Reconnect Google at /auth/google. ${err instanceof Error ? err.message : String(err)}`,
+    }
+  }
+}
+
+async function validateDefaultCalendar(calendarId: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (calendarId === PRIMARY_CALENDAR_ID) return { ok: true }
+
+  const gmailRow = db.query('SELECT user_id FROM gmail_tokens LIMIT 1').get() as { user_id: string } | null
+  if (!gmailRow) {
+    return { ok: false, error: 'Connect Google before selecting a non-primary default calendar.' }
+  }
+
+  try {
+    const calendars = await listWritableCalendarsForUser(gmailRow.user_id)
+    if (calendars.some((c) => c.id === calendarId)) return { ok: true }
+    return { ok: false, error: 'Selected calendar was not found in writable Google calendars.' }
+  } catch (err) {
+    return {
+      ok: false,
+      error: `Unable to validate calendars. Reconnect Google at /auth/google. ${err instanceof Error ? err.message : String(err)}`,
+    }
+  }
+}

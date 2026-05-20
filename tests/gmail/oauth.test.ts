@@ -24,6 +24,7 @@ describe('gmail oauth', () => {
     expect(scope).toContain('https://www.googleapis.com/auth/gmail.modify')
     expect(scope).toContain('https://www.googleapis.com/auth/gmail.send')
     expect(scope).toContain('https://www.googleapis.com/auth/userinfo.email')
+    expect(scope).toContain('https://www.googleapis.com/auth/calendar.calendarlist.readonly')
   })
 
   test('exchangeGmailCode posts form-encoded body and returns tokens', async () => {
