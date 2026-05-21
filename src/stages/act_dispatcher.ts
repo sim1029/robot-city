@@ -61,7 +61,7 @@ export async function dispatchToolCall(
           description: args.description ? String(args.description) : undefined,
           location: args.location ? String(args.location) : undefined,
           attendees: Array.isArray(args.attendees) ? (args.attendees as string[]) : undefined,
-          calendarId: args.calendarId ? String(args.calendarId) : undefined,
+          calendarId: stringArg(args.calendarId ?? args.calendar_id),
         },
         { gmailUserId: ctx.gmailUserId, sessionId: ctx.sessionId }
       )
@@ -75,7 +75,7 @@ export async function dispatchToolCall(
           eventId: String(args.eventId ?? ''),
           emails: Array.isArray(args.emails) ? (args.emails as string[]) : [],
           eventTitle: args.eventTitle ? String(args.eventTitle) : undefined,
-          calendarId: args.calendarId ? String(args.calendarId) : undefined,
+          calendarId: stringArg(args.calendarId ?? args.calendar_id),
         },
         { sessionId: ctx.sessionId }
       )
@@ -119,10 +119,14 @@ function logToolCall(sessionId: string | null, toolName: string, args: Record<st
   })
 }
 
+function stringArg(value: unknown): string | undefined {
+  return value == null || value === '' ? undefined : String(value)
+}
+
 function sanitizeToolInput(toolName: string, args: Record<string, unknown>): Record<string, unknown> {
   if (toolName === 'send_email') return { to: args.to, subject: args.subject }
-  if (toolName === 'invite_attendees') return { eventId: args.eventId, eventTitle: args.eventTitle, emails: args.emails, calendarId: args.calendarId }
-  if (toolName === 'create_calendar_event') return { title: args.title, start: args.start, end: args.end, location: args.location, attendees: args.attendees, calendarId: args.calendarId }
+  if (toolName === 'invite_attendees') return { eventId: args.eventId, eventTitle: args.eventTitle, emails: args.emails, calendarId: args.calendarId ?? args.calendar_id }
+  if (toolName === 'create_calendar_event') return { title: args.title, start: args.start, end: args.end, location: args.location, attendees: args.attendees, calendarId: args.calendarId ?? args.calendar_id }
   if (toolName === 'read_calendar') return { date: args.date, days: args.days }
   return args
 }

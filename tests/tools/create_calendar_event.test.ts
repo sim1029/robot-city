@@ -206,4 +206,32 @@ describe('createCalendarEvent', () => {
     expect(body.start.timeZone).toBe('America/New_York')
     expect(body.end.timeZone).toBe('America/New_York')
   })
+
+  test('accepts snake_case calendar_id and lets primary override saved default calendar', async () => {
+    setSetting('timezone', 'America/Chicago')
+    db.run("INSERT INTO user_settings (key, value) VALUES ('default_calendar_id', 'team@example.com')")
+    mockCalendarList([
+      { id: 'primary@example.com', summary: 'Primary', primary: true, timeZone: 'America/New_York' },
+      { id: 'team@example.com', summary: 'Team', timeZone: 'America/Chicago' },
+    ])
+    mockFetch(/calendar\/v3\/calendars\/primary\/events/, {
+      json: { id: 'evt-7', summary: 'Gym', start: {}, end: {} },
+    })
+
+    await createCalendarEvent(
+      {
+        title: 'Gym',
+        start: '2026-05-21T07:00:00',
+        end: '2026-05-21T08:00:00',
+        calendar_id: 'primary',
+      },
+      { gmailUserId: USER, sessionId: null }
+    )
+
+    const call = fetchCalls().find(c => c.method === 'POST')
+    const body = call!.bodyJson() as { start: { dateTime: string; timeZone: string } }
+    expect(call?.url).toContain('/calendars/primary/events')
+    expect(body.start.dateTime).toBe('2026-05-21T07:00:00-04:00')
+    expect(body.start.timeZone).toBe('America/New_York')
+  })
 })

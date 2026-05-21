@@ -58,6 +58,10 @@ const FORUM_TOOLS: ToolDefinition[] = [
           type: 'string',
           description: 'Google Calendar ID to create the event on. Use this only when the user explicitly names a calendar from AVAILABLE CALENDARS.',
         },
+        calendar_id: {
+          type: 'string',
+          description: 'Alias for calendarId.',
+        },
       },
       required: ['title', 'start', 'end'],
     },
@@ -74,6 +78,10 @@ const FORUM_TOOLS: ToolDefinition[] = [
         calendarId: {
           type: 'string',
           description: 'Google Calendar ID containing the event. Use the calendarId returned by create_calendar_event when inviting attendees to a newly-created non-primary calendar event.',
+        },
+        calendar_id: {
+          type: 'string',
+          description: 'Alias for calendarId.',
         },
       },
       required: ['eventId', 'emails'],

@@ -12,6 +12,7 @@ export interface CreateEventArgs {
   location?: string
   attendees?: string[]
   calendarId?: string
+  calendar_id?: string
 }
 
 export async function createCalendarEvent(
@@ -20,7 +21,7 @@ export async function createCalendarEvent(
 ): Promise<string> {
   validateArgs(args)
   const accessToken = await getValidGmailAccessToken(ctx.gmailUserId)
-  const calendarId = args.calendarId?.trim() || getDefaultCalendarId()
+  const calendarId = requestedCalendarId(args) || getDefaultCalendarId()
   const timezone = await resolveCalendarTimezone(accessToken, calendarId, getSetting('timezone', 'UTC'))
 
   const event = await createEvent(accessToken, {
@@ -62,6 +63,10 @@ function formatEventDate(iso: string): string {
   } catch {
     return iso
   }
+}
+
+function requestedCalendarId(args: CreateEventArgs): string | undefined {
+  return args.calendarId?.trim() || args.calendar_id?.trim() || undefined
 }
 
 // Google Calendar interprets naive `dateTime` strings (no offset) inconsistently when only
