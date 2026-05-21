@@ -212,6 +212,7 @@ describe('discord handlers', () => {
     expect(body.content).toContain('Here is the answer.')
     expect(body.content).toContain('─────────────────────────────────')
     expect(body.content).toMatch(/\$\d+\.\d{4}/)
+    expect(fetchCalls().some(c => c.url === 'https://api.openai.com/v1/audio/transcriptions')).toBe(false)
   })
 
   test('handleThreadMessage footer includes "session $X.XXXX" totals', async () => {
