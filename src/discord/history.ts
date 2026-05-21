@@ -1,3 +1,5 @@
+import { db } from '../db/client'
+
 const DISCORD_API = 'https://discord.com/api/v10'
 const FOOTER_SEPARATOR = '─────────────────────────────────'
 
@@ -11,6 +13,7 @@ interface DiscordMessage {
   content: string
   timestamp?: string
   author: { id: string; username?: string; bot?: boolean }
+  attachments?: Array<{ id: string }>
 }
 
 export async function fetchThreadHistory(
@@ -33,15 +36,19 @@ export async function fetchThreadHistory(
 
   // Discord returns newest-first; reverse for chronological order
   const chronological = [...raw].reverse()
+  const transcripts = loadAudioTranscripts(threadId)
 
   return chronological
-    .map(toHistoryMessage)
+    .map(msg => toHistoryMessage(msg, transcripts.get(msg.id)))
     .filter((m): m is ThreadHistoryMessage => m !== null)
 }
 
-function toHistoryMessage(msg: DiscordMessage): ThreadHistoryMessage | null {
+function toHistoryMessage(msg: DiscordMessage, transcript?: string): ThreadHistoryMessage | null {
   const role: 'user' | 'assistant' = msg.author.bot ? 'assistant' : 'user'
-  const content = role === 'assistant' ? stripFooter(msg.content) : msg.content
+  const visibleContent = role === 'assistant' ? stripFooter(msg.content) : msg.content
+  const content = role === 'user' && transcript
+    ? mergeTranscriptIntoUserContent(visibleContent, transcript)
+    : visibleContent
   if (!content.trim()) return null
   return { role, content }
 }
@@ -50,4 +57,34 @@ function stripFooter(content: string): string {
   const idx = content.indexOf(FOOTER_SEPARATOR)
   if (idx === -1) return content
   return content.slice(0, idx).trimEnd()
+}
+
+function mergeTranscriptIntoUserContent(content: string, transcript: string): string {
+  const trimmedContent = content.trim()
+  const trimmedTranscript = transcript.trim()
+  if (!trimmedContent) return trimmedTranscript
+  return `${trimmedContent}\n\n[TRANSCRIBED AUDIO]\n${trimmedTranscript}`
+}
+
+function loadAudioTranscripts(threadId: string): Map<string, string> {
+  const rows = db.query(
+    `SELECT payload, output
+     FROM events
+     WHERE session_id = ?
+       AND type = 'audio:transcription'
+       AND output IS NOT NULL
+     ORDER BY id ASC`
+  ).all(`discord:${threadId}`) as Array<{ payload: string | null; output: string | null }>
+
+  const transcripts = new Map<string, string>()
+  for (const row of rows) {
+    if (!row.payload || !row.output) continue
+    try {
+      const payload = JSON.parse(row.payload) as { messageId?: unknown }
+      if (typeof payload.messageId === 'string') transcripts.set(payload.messageId, row.output)
+    } catch {
+      // Ignore malformed legacy/debug payloads.
+    }
+  }
+  return transcripts
 }

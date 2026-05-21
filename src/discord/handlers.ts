@@ -13,10 +13,16 @@ import { editChannelMessage, sendApprovalCardForApproval, sendThreadMessage, sen
 import { fetchThreadHistory } from './history'
 import { getSetting } from '../db/settings'
 import { isPaused } from '../system/pause'
-import { computeSessionStats, getSessionCost, markSessionClosed } from '../db/sessions'
+import { computeSessionStats, ensureSession, getSessionCost, markSessionClosed } from '../db/sessions'
 import { db } from '../db/client'
+import { insertEvent } from '../db/events'
 import type { ContentBlock, ToolDefinition } from '../providers/types'
 import { formatCalendarList, listWritableCalendarsForUser } from '../calendar/defaults'
+import {
+  type DiscordMessageAttachment,
+  resolveAudioInput,
+  transcribeDiscordAudioAttachment,
+} from './audio'
 
 export { sendApprovalCardForApproval }
 
@@ -202,6 +208,7 @@ export async function handleThreadMessage(args: {
   userId: string
   messageId: string
   content: string
+  attachments?: DiscordMessageAttachment[]
 }): Promise<void> {
   const sessionId = `discord:${args.threadId}`
 
@@ -215,6 +222,12 @@ export async function handleThreadMessage(args: {
 
   await sendTypingIndicator(args.threadId)
 
+  const normalizedContent = await normalizeThreadMessageContent(args, sessionId)
+  if (normalizedContent.kind === 'error') {
+    await sendThreadMessage(args.threadId, normalizedContent.message)
+    return
+  }
+
   const gmailRow = db
     .query('SELECT user_id FROM gmail_tokens LIMIT 1')
     .get() as { user_id: string } | null
@@ -224,7 +237,7 @@ export async function handleThreadMessage(args: {
 
   const classifyResult = await runStage(
     'classify',
-    INTERACTIVE_CLASSIFY_PROMPT(args.content),
+    INTERACTIVE_CLASSIFY_PROMPT(normalizedContent.content),
     sessionId
   )
 
@@ -239,7 +252,7 @@ export async function handleThreadMessage(args: {
 
   const latestUserContent = [
     dateHeader,
-    `[ORIGINAL MESSAGE]\n${args.content}`,
+    `[ORIGINAL MESSAGE]\n${normalizedContent.content}`,
     `[CLASSIFY]\n${classifyResult.text}`,
     gatherData ? `[CONTEXT]\n${gatherData}` : '',
     calendarContext,
@@ -308,6 +321,56 @@ export async function handleThreadMessage(args: {
   const footer = buildFooter(allStageResults, sessionCost)
   const reply = `${finalReasonText}${dispatchNote}\n\n${footer}`
   await sendThreadMessage(args.threadId, reply)
+}
+
+async function normalizeThreadMessageContent(
+  args: {
+    threadId: string
+    messageId: string
+    content: string
+    attachments?: DiscordMessageAttachment[]
+  },
+  sessionId: string
+): Promise<{ kind: 'ok'; content: string } | { kind: 'error'; message: string }> {
+  const content = args.content.trim()
+  const audioInput = resolveAudioInput(content, args.attachments ?? [])
+  if (audioInput.kind === 'error') return { kind: 'error', message: audioInput.message }
+  if (audioInput.kind === 'none') {
+    if (!content) return { kind: 'error', message: 'Send a text message or one audio attachment for me to process.' }
+    return { kind: 'ok', content }
+  }
+
+  try {
+    const transcription = await transcribeDiscordAudioAttachment(audioInput.attachment)
+    ensureSession(sessionId)
+    insertEvent({
+      sessionId,
+      type: 'audio:transcription',
+      model: transcription.model,
+      latencyMs: transcription.latencyMs,
+      payload: JSON.stringify({
+        threadId: args.threadId,
+        messageId: args.messageId,
+        attachmentId: audioInput.attachment.id,
+        filename: audioInput.attachment.name,
+        contentType: audioInput.attachment.contentType,
+        size: audioInput.attachment.size,
+      }),
+      output: transcription.text,
+    })
+
+    return {
+      kind: 'ok',
+      content: content
+        ? `${content}\n\n[TRANSCRIBED AUDIO]\n${transcription.text}`
+        : transcription.text,
+    }
+  } catch (err) {
+    return {
+      kind: 'error',
+      message: `I couldn't transcribe that audio: ${err instanceof Error ? err.message : String(err)}`,
+    }
+  }
 }
 
 export async function handleThreadArchive(args: { threadId: string }): Promise<void> {

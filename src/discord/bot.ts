@@ -1,4 +1,4 @@
-import { Client, Events, GatewayIntentBits, ChannelType } from 'discord.js'
+import { Client, Events, GatewayIntentBits, ChannelType, MessageFlags } from 'discord.js'
 import { handleApprovalInteraction, handleEditModalSubmit, handleThreadArchive, handleThreadMessage } from './handlers'
 import { getResolvedForumId, resolveForumChannel } from './forum'
 import { handleSlashCommand, registerGuildSlashCommands } from './slash_commands'
@@ -44,11 +44,22 @@ export async function startBot(): Promise<BotHandle> {
     if (!parent || parent.id !== getResolvedForumId()) return
 
     try {
+      const isVoiceMessage = msg.flags.has(MessageFlags.IsVoiceMessage)
       await handleThreadMessage({
         threadId: msg.channelId,
         userId: msg.author.id,
         messageId: msg.id,
         content: msg.content,
+        attachments: msg.attachments.map(attachment => ({
+          id: attachment.id,
+          name: attachment.name,
+          contentType: attachment.contentType,
+          size: attachment.size,
+          url: attachment.url,
+          duration: attachment.duration,
+          waveform: attachment.waveform,
+          isVoiceMessage,
+        })),
       })
     } catch (err) {
       console.error('handleThreadMessage error', err)

@@ -1,6 +1,8 @@
 import { describe, expect, test, beforeAll, beforeEach, afterEach, afterAll } from 'bun:test'
 import { installFetchMock, uninstallFetchMock, resetFetchMock, mockFetch, fetchCalls } from '../_helpers/fetch-mock'
 import { fetchThreadHistory } from '../../src/discord/history'
+import { db } from '../../src/db/client'
+import { migrate } from '../../src/db/schema'
 
 const BOT_USER_ID = 'bot-1'
 
@@ -16,7 +18,12 @@ function discordMessage(opts: { id: string; content: string; bot?: boolean; time
 describe('fetchThreadHistory', () => {
   beforeAll(() => {
     process.env.DISCORD_BOT_TOKEN = 'bot-token'
+    migrate()
     installFetchMock()
+  })
+  beforeEach(() => {
+    db.run('DELETE FROM events')
+    db.run('DELETE FROM sessions')
   })
   afterEach(() => resetFetchMock())
   afterAll(() => uninstallFetchMock())
@@ -95,5 +102,58 @@ describe('fetchThreadHistory', () => {
     mockFetch(/channels\/thread-1\/messages/, { json: [] })
     const history = await fetchThreadHistory('thread-1')
     expect(history).toEqual([])
+  })
+
+  test('restores hidden audio transcripts for prior user messages', async () => {
+    db.run(
+      `INSERT INTO sessions (id, discord_thread_id, created_at, total_cost_usd)
+       VALUES ('discord:thread-audio-history', 'thread-audio-history', 1, 0)`
+    )
+    db.run(
+      `INSERT INTO events (session_id, type, model, payload, output)
+       VALUES (?, 'audio:transcription', 'gpt-4o-mini-transcribe', ?, ?)`,
+      [
+        'discord:thread-audio-history',
+        JSON.stringify({ threadId: 'thread-audio-history', messageId: 'voice-1', attachmentId: 'att-1' }),
+        'Please move lunch to Friday.',
+      ]
+    )
+
+    mockFetch(/channels\/thread-audio-history\/messages/, {
+      json: [
+        discordMessage({ id: 'voice-1', content: '', timestamp: '2026-05-10T12:00:00.000Z' }),
+      ],
+    })
+
+    const history = await fetchThreadHistory('thread-audio-history')
+    expect(history).toEqual([{ role: 'user', content: 'Please move lunch to Friday.' }])
+  })
+
+  test('merges hidden audio transcripts with visible text in history', async () => {
+    db.run(
+      `INSERT INTO sessions (id, discord_thread_id, created_at, total_cost_usd)
+       VALUES ('discord:thread-mixed-history', 'thread-mixed-history', 1, 0)`
+    )
+    db.run(
+      `INSERT INTO events (session_id, type, model, payload, output)
+       VALUES (?, 'audio:transcription', 'gpt-4o-mini-transcribe', ?, ?)`,
+      [
+        'discord:thread-mixed-history',
+        JSON.stringify({ threadId: 'thread-mixed-history', messageId: 'mixed-1', attachmentId: 'att-1' }),
+        'and invite Sarah.',
+      ]
+    )
+
+    mockFetch(/channels\/thread-mixed-history\/messages/, {
+      json: [
+        discordMessage({ id: 'mixed-1', content: 'Set up planning', timestamp: '2026-05-10T12:00:00.000Z' }),
+      ],
+    })
+
+    const history = await fetchThreadHistory('thread-mixed-history')
+    expect(history).toEqual([{
+      role: 'user',
+      content: 'Set up planning\n\n[TRANSCRIBED AUDIO]\nand invite Sarah.',
+    }])
   })
 })

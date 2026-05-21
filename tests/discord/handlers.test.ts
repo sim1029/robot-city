@@ -18,6 +18,7 @@ import {
 describe('discord handlers', () => {
   beforeAll(() => {
     process.env.ANTHROPIC_API_KEY = 'sk-test'
+    process.env.OPENAI_API_KEY = 'sk-openai-test'
     process.env.DISCORD_BOT_TOKEN = 'bot-token'
     migrate()
     installFetchMock()
@@ -211,6 +212,7 @@ describe('discord handlers', () => {
     expect(body.content).toContain('Here is the answer.')
     expect(body.content).toContain('─────────────────────────────────')
     expect(body.content).toMatch(/\$\d+\.\d{4}/)
+    expect(fetchCalls().some(c => c.url === 'https://api.openai.com/v1/audio/transcriptions')).toBe(false)
   })
 
   test('handleThreadMessage footer includes "session $X.XXXX" totals', async () => {
@@ -305,6 +307,143 @@ describe('discord handlers', () => {
     // Discord fetch should have used `before` so the current message is not in history
     const historyCall = fetchCalls().find(c => c.method === 'GET' && c.url.includes('/channels/thread-9/messages'))!
     expect(historyCall.url).toContain('before=msg-current')
+  })
+
+  test('handleThreadMessage transcribes audio-only messages before running the pipeline', async () => {
+    mockFetch(/channels\/thread-audio\/typing$/, { status: 204, json: null })
+    mockFetch('https://cdn.discordapp.com/audio-note.m4a', {
+      text: 'fake audio bytes',
+      headers: { 'content-type': 'audio/mp4' },
+    })
+    mockFetch('https://api.openai.com/v1/audio/transcriptions', {
+      json: { text: 'Schedule lunch tomorrow at noon.' },
+    })
+    mockFetch(/channels\/thread-audio\/messages\?/, { json: [] })
+
+    let classifyBody: { messages: Array<{ content: string }> } | null = null
+    mockFetch('https://api.anthropic.com/v1/messages', async (req) => {
+      classifyBody = req.bodyJson() as { messages: Array<{ content: string }> }
+      return {
+        json: {
+          model: 'claude-haiku-4-5-20251001',
+          content: [{ type: 'text', text: 'CREATE_CALENDAR_EVENT\nUser wants lunch scheduled.' }],
+          stop_reason: 'end_turn',
+          usage: { input_tokens: 50, output_tokens: 10 },
+        },
+      }
+    }, { once: true })
+
+    mockFetch('https://api.anthropic.com/v1/messages', {
+      json: {
+        model: 'claude-sonnet-4-6',
+        content: [{ type: 'text', text: 'I can help with that.' }],
+        stop_reason: 'end_turn',
+        usage: { input_tokens: 80, output_tokens: 20 },
+      },
+    }, { once: true })
+    mockFetch(/channels\/thread-audio\/messages$/, { json: { id: 'reply-audio' } })
+
+    await handleThreadMessage({
+      threadId: 'thread-audio',
+      userId: 'discord-user-1',
+      messageId: 'msg-audio',
+      content: '',
+      attachments: [{
+        id: 'att-audio',
+        name: 'audio-note.m4a',
+        contentType: 'audio/mp4',
+        size: 1024,
+        url: 'https://cdn.discordapp.com/audio-note.m4a',
+        duration: null,
+        waveform: null,
+      }],
+    })
+
+    const capturedClassifyBody = classifyBody as { messages: Array<{ content: string }> } | null
+    expect(capturedClassifyBody?.messages[0].content).toContain('Schedule lunch tomorrow at noon.')
+    const transcriptionEvent = db.query(
+      "SELECT output FROM events WHERE type = 'audio:transcription' AND session_id = 'discord:thread-audio'"
+    ).get() as { output: string } | null
+    expect(transcriptionEvent?.output).toBe('Schedule lunch tomorrow at noon.')
+
+    const openAiCall = fetchCalls().find(c => c.url === 'https://api.openai.com/v1/audio/transcriptions')!
+    expect(openAiCall.headers.authorization).toBe('Bearer sk-openai-test')
+  })
+
+  test('handleThreadMessage combines typed text and transcribed audio', async () => {
+    mockFetch(/channels\/thread-mixed\/typing$/, { status: 204, json: null })
+    mockFetch('https://cdn.discordapp.com/context.wav', {
+      text: 'fake wav bytes',
+      headers: { 'content-type': 'audio/wav' },
+    })
+    mockFetch('https://api.openai.com/v1/audio/transcriptions', {
+      json: { text: 'and make it for the product team.' },
+    })
+    mockFetch(/channels\/thread-mixed\/messages\?/, { json: [] })
+    mockFetch('https://api.anthropic.com/v1/messages', {
+      json: {
+        model: 'claude-haiku-4-5-20251001',
+        content: [{ type: 'text', text: 'CONVERSATION\nCombined request.' }],
+        stop_reason: 'end_turn',
+        usage: { input_tokens: 50, output_tokens: 10 },
+      },
+    }, { once: true })
+
+    let reasonMessages: Array<{ role: string; content: unknown }> | null = null
+    mockFetch('https://api.anthropic.com/v1/messages', async (req) => {
+      reasonMessages = (req.bodyJson() as { messages: Array<{ role: string; content: unknown }> }).messages
+      return {
+        json: {
+          model: 'claude-sonnet-4-6',
+          content: [{ type: 'text', text: 'Done.' }],
+          stop_reason: 'end_turn',
+          usage: { input_tokens: 80, output_tokens: 20 },
+        },
+      }
+    }, { once: true })
+    mockFetch(/channels\/thread-mixed\/messages$/, { json: { id: 'reply-mixed' } })
+
+    await handleThreadMessage({
+      threadId: 'thread-mixed',
+      userId: 'discord-user-1',
+      messageId: 'msg-mixed',
+      content: 'Schedule a sync',
+      attachments: [{
+        id: 'att-mixed',
+        name: 'context.wav',
+        contentType: 'audio/wav',
+        size: 2048,
+        url: 'https://cdn.discordapp.com/context.wav',
+        duration: null,
+        waveform: null,
+      }],
+    })
+
+    const lastUser = [...reasonMessages!].reverse().find(m => m.role === 'user')!
+    expect(String(lastUser.content)).toContain('Schedule a sync')
+    expect(String(lastUser.content)).toContain('[TRANSCRIBED AUDIO]')
+    expect(String(lastUser.content)).toContain('and make it for the product team.')
+  })
+
+  test('handleThreadMessage rejects multiple audio attachments before LLM calls', async () => {
+    mockFetch(/channels\/thread-many-audio\/typing$/, { status: 204, json: null })
+    mockFetch(/channels\/thread-many-audio\/messages$/, { json: { id: 'reply-many-audio' } })
+
+    await handleThreadMessage({
+      threadId: 'thread-many-audio',
+      userId: 'discord-user-1',
+      messageId: 'msg-many-audio',
+      content: '',
+      attachments: [
+        { id: 'a1', name: 'one.m4a', contentType: 'audio/mp4', size: 100, url: 'https://cdn.discordapp.com/one.m4a', duration: null, waveform: null },
+        { id: 'a2', name: 'two.wav', contentType: 'audio/wav', size: 100, url: 'https://cdn.discordapp.com/two.wav', duration: null, waveform: null },
+      ],
+    })
+
+    const replyCall = fetchCalls().find(c => c.method === 'POST' && c.url.endsWith('/thread-many-audio/messages'))!
+    expect((replyCall.bodyJson() as { content: string }).content).toContain('only one audio file')
+    expect(fetchCalls().some(c => c.url === 'https://api.anthropic.com/v1/messages')).toBe(false)
+    expect(fetchCalls().some(c => c.url === 'https://api.openai.com/v1/audio/transcriptions')).toBe(false)
   })
 
   test('handleThreadMessage executes tool natively and feeds tool_result into second reason iteration', async () => {
