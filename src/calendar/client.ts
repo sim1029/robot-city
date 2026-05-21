@@ -28,6 +28,7 @@ export interface CalendarListEntry {
   summary: string
   primary?: boolean
   accessRole?: string
+  timeZone?: string
 }
 
 export interface CalendarEventInput {

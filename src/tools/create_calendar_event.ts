@@ -1,4 +1,4 @@
-import { createEvent } from '../calendar/client'
+import { createEvent, listCalendars } from '../calendar/client'
 import { getValidGmailAccessToken } from '../gmail/tokens'
 import { getSetting } from '../db/settings'
 import { getDefaultCalendarId, PRIMARY_CALENDAR_ID } from '../calendar/defaults'
@@ -20,8 +20,8 @@ export async function createCalendarEvent(
 ): Promise<string> {
   validateArgs(args)
   const accessToken = await getValidGmailAccessToken(ctx.gmailUserId)
-  const timezone = getSetting('timezone', 'UTC')
   const calendarId = args.calendarId?.trim() || getDefaultCalendarId()
+  const timezone = await resolveCalendarTimezone(accessToken, calendarId, getSetting('timezone', 'UTC'))
 
   const event = await createEvent(accessToken, {
     summary: args.title,
@@ -79,6 +79,18 @@ export function withOffset(localIso: string, timeZone: string): string {
   const guess = offsetMsAt(asUtcMs, timeZone)
   const resolved = offsetMsAt(asUtcMs - guess, timeZone)
   return `${localIso}${formatOffset(resolved)}`
+}
+
+async function resolveCalendarTimezone(accessToken: string, calendarId: string, fallback: string): Promise<string> {
+  try {
+    const calendars = await listCalendars(accessToken)
+    const calendar = calendarId === PRIMARY_CALENDAR_ID
+      ? calendars.find(c => c.primary) ?? calendars.find(c => c.id === PRIMARY_CALENDAR_ID)
+      : calendars.find(c => c.id === calendarId)
+    return calendar?.timeZone || fallback
+  } catch {
+    return fallback
+  }
 }
 
 function offsetMsAt(instantMs: number, timeZone: string): number {
