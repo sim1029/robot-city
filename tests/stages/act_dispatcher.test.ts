@@ -46,4 +46,22 @@ describe('act dispatcher', () => {
     expect(result.kind).toBe('executed')
     expect(fetchCalls().find(c => c.method === 'POST')?.url).toContain('/calendars/work%40example.com/events')
   })
+
+  test('passes create_calendar_event snake_case calendar_id through to the tool', async () => {
+    mockFetch(/calendars\/primary\/events$/, { json: { id: 'evt-2', summary: 'Gym' } })
+
+    const result = await dispatchToolCall(
+      'create_calendar_event',
+      {
+        title: 'Gym',
+        start: '2026-05-21T07:00:00',
+        end: '2026-05-21T08:00:00',
+        calendar_id: 'primary',
+      },
+      { gmailUserId: 'me@example.com', discordUserId: 'discord-user', sessionId: null }
+    )
+
+    expect(result.kind).toBe('executed')
+    expect(fetchCalls().find(c => c.method === 'POST')?.url).toContain('/calendars/primary/events')
+  })
 })
