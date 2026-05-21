@@ -8,6 +8,14 @@ import { createCalendarEvent, withOffset } from '../../src/tools/create_calendar
 
 const USER = 'me@example.com'
 
+function mockCalendarList(
+  items: Array<{ id: string; summary: string; primary?: boolean; timeZone?: string }> = [
+    { id: 'primary@example.com', summary: 'Primary', primary: true, timeZone: 'America/New_York' },
+  ]
+) {
+  mockFetch(/calendar\/v3\/users\/me\/calendarList/, { json: { items } })
+}
+
 describe('withOffset', () => {
   test('appends DST offset for summer date in America/New_York', () => {
     expect(withOffset('2026-06-20T10:00:00', 'America/New_York')).toBe('2026-06-20T10:00:00-04:00')
@@ -80,6 +88,7 @@ describe('createCalendarEvent', () => {
 
   test('sends DST-aware offset in dateTime for summer event in America/New_York', async () => {
     setSetting('timezone', 'America/New_York')
+    mockCalendarList()
     mockFetch(/calendar\/v3\/calendars\/primary\/events/, {
       json: { id: 'evt-1', summary: 'Golf', start: {}, end: {}, htmlLink: 'https://cal.example/1' },
     })
@@ -99,6 +108,7 @@ describe('createCalendarEvent', () => {
 
   test('sends standard-time offset in dateTime for winter event in America/New_York', async () => {
     setSetting('timezone', 'America/New_York')
+    mockCalendarList()
     mockFetch(/calendar\/v3\/calendars\/primary\/events/, {
       json: { id: 'evt-2', summary: 'Ski trip', start: {}, end: {} },
     })
@@ -116,6 +126,7 @@ describe('createCalendarEvent', () => {
 
   test('preserves explicit offset already present in caller-provided dateTime', async () => {
     setSetting('timezone', 'America/New_York')
+    mockCalendarList()
     mockFetch(/calendar\/v3\/calendars\/primary\/events/, {
       json: { id: 'evt-3', summary: 'X', start: {}, end: {} },
     })
@@ -133,6 +144,10 @@ describe('createCalendarEvent', () => {
 
   test('uses saved default calendar when calendarId is omitted', async () => {
     db.run("INSERT INTO user_settings (key, value) VALUES ('default_calendar_id', 'team@example.com')")
+    mockCalendarList([
+      { id: 'primary@example.com', summary: 'Primary', primary: true, timeZone: 'America/New_York' },
+      { id: 'team@example.com', summary: 'Team', timeZone: 'America/Los_Angeles' },
+    ])
     mockFetch(/calendars\/team%40example.com\/events$/, {
       json: { id: 'evt-4', summary: 'Planning', htmlLink: 'https://calendar.google.com/event?eid=4' },
     })
@@ -143,7 +158,7 @@ describe('createCalendarEvent', () => {
     )
 
     expect(result).toContain('team@example.com')
-    expect(fetchCalls()[0].url).toContain('/calendars/team%40example.com/events')
+    expect(fetchCalls().find(c => c.method === 'POST')?.url).toContain('/calendars/team%40example.com/events')
 
     const ev = db.query("SELECT payload FROM events WHERE type = 'tool:create_calendar_event'").get() as { payload: string }
     expect(JSON.parse(ev.payload).calendar_id).toBe('team@example.com')
@@ -151,6 +166,10 @@ describe('createCalendarEvent', () => {
 
   test('explicit calendarId overrides saved default', async () => {
     db.run("INSERT INTO user_settings (key, value) VALUES ('default_calendar_id', 'team@example.com')")
+    mockCalendarList([
+      { id: 'team@example.com', summary: 'Team', timeZone: 'America/Los_Angeles' },
+      { id: 'side@example.com', summary: 'Side', timeZone: 'America/New_York' },
+    ])
     mockFetch(/calendars\/side%40example.com\/events$/, { json: { id: 'evt-5', summary: 'Focus' } })
 
     await createCalendarEvent(
@@ -163,6 +182,28 @@ describe('createCalendarEvent', () => {
       { gmailUserId: USER, sessionId: null }
     )
 
-    expect(fetchCalls()[0].url).toContain('/calendars/side%40example.com/events')
+    expect(fetchCalls().find(c => c.method === 'POST')?.url).toContain('/calendars/side%40example.com/events')
+  })
+
+  test('uses target calendar timezone instead of app-wide timezone for naive datetimes', async () => {
+    setSetting('timezone', 'America/Chicago')
+    mockCalendarList([
+      { id: 'primary@example.com', summary: 'Primary', primary: true, timeZone: 'America/New_York' },
+    ])
+    mockFetch(/calendar\/v3\/calendars\/primary\/events/, {
+      json: { id: 'evt-6', summary: 'Gym', start: {}, end: {} },
+    })
+
+    await createCalendarEvent(
+      { title: 'Gym', start: '2026-05-21T07:00:00', end: '2026-05-21T08:00:00' },
+      { gmailUserId: USER, sessionId: null }
+    )
+
+    const call = fetchCalls().find(c => c.method === 'POST')
+    const body = call!.bodyJson() as { start: { dateTime: string; timeZone: string }; end: { dateTime: string; timeZone: string } }
+    expect(body.start.dateTime).toBe('2026-05-21T07:00:00-04:00')
+    expect(body.end.dateTime).toBe('2026-05-21T08:00:00-04:00')
+    expect(body.start.timeZone).toBe('America/New_York')
+    expect(body.end.timeZone).toBe('America/New_York')
   })
 })

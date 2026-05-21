@@ -44,6 +44,6 @@ describe('act dispatcher', () => {
     )
 
     expect(result.kind).toBe('executed')
-    expect(fetchCalls()[0].url).toContain('/calendars/work%40example.com/events')
+    expect(fetchCalls().find(c => c.method === 'POST')?.url).toContain('/calendars/work%40example.com/events')
   })
 })
