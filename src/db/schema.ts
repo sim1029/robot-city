@@ -1,4 +1,5 @@
 import { db } from './client'
+import { validateTimezone } from '../timezones'
 
 export function migrate() {
   db.run(`
@@ -159,5 +160,16 @@ export function migrate() {
   }
   for (const [key, value] of Object.entries(settingDefaults)) {
     db.run(`INSERT OR IGNORE INTO user_settings (key, value) VALUES (?, ?)`, [key, value])
+  }
+  normalizeStoredTimezone()
+}
+
+function normalizeStoredTimezone() {
+  const row = db.query(`SELECT value FROM user_settings WHERE key = 'timezone'`).get() as { value: string } | null
+  if (!row) return
+
+  const timezone = validateTimezone(row.value)
+  if (timezone.ok && timezone.value !== row.value) {
+    db.run(`UPDATE user_settings SET value = ?, updated_at = unixepoch() WHERE key = 'timezone'`, [timezone.value])
   }
 }
