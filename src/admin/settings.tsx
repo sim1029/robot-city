@@ -5,6 +5,7 @@ import { renderPage, renderFragment } from './render'
 import { db } from '../db/client'
 import { formatCalendarLabel, listWritableCalendarsForUser, PRIMARY_CALENDAR_ID } from '../calendar/defaults'
 import type { CalendarListEntry } from '../calendar/client'
+import { normalizeTimezoneValue, timezoneOptions, validateTimezone } from '../timezones'
 
 type FieldType = 'text' | 'bool' | 'number'
 
@@ -15,7 +16,6 @@ interface SettingField {
 }
 
 const SETTING_FIELDS: SettingField[] = [
-  { key: 'timezone', label: 'Timezone (IANA, e.g. America/Los_Angeles)', type: 'text' },
   { key: 'brief_morning_enabled', label: 'Morning brief enabled', type: 'bool' },
   { key: 'brief_morning_hour', label: 'Morning brief hour (0-23, local time)', type: 'number' },
   { key: 'brief_midday_enabled', label: 'Midday brief enabled', type: 'bool' },
@@ -45,6 +45,33 @@ function FieldRow({ field, value }: FieldRowProps) {
     <div className="field">
       <label htmlFor={`f-${field.key}`}>{field.label}</label>
       <input id={`f-${field.key}`} type={inputType} name={field.key} defaultValue={value} />
+    </div>
+  )
+}
+
+function TimezoneField({ value }: { value: string }) {
+  const normalizedValue = normalizeTimezoneValue(value || 'UTC')
+  const options = timezoneOptions()
+
+  return (
+    <div className="field">
+      <label htmlFor="f-timezone">Timezone</label>
+      <input
+        id="f-timezone"
+        className="timezone-search"
+        type="search"
+        name="timezone"
+        list="timezone-options"
+        defaultValue={normalizedValue}
+        placeholder="Search timezones"
+        autoComplete="off"
+      />
+      <datalist id="timezone-options">
+        {options.map((option) => (
+          <option key={option.value} value={option.value} label={option.popular ? `Popular - ${option.label}` : option.label} />
+        ))}
+      </datalist>
+      <p className="field-help">Search by city or region. Common timezones appear first.</p>
     </div>
   )
 }
@@ -103,6 +130,7 @@ function SettingsPage({ csrfToken, settings, calendars, calendarError }: Setting
           calendars={calendars}
           error={calendarError}
         />
+        <TimezoneField value={settings.timezone ?? 'UTC'} />
         {SETTING_FIELDS.map((f) => (
           <FieldRow key={f.key} field={f} value={settings[f.key] ?? ''} />
         ))}
@@ -131,23 +159,36 @@ settingsRoutes.post('/', async (c) => {
   if (!validation.ok) {
     return c.html(renderFragment(<span className="status-err">{validation.error}</span>))
   }
-  setSetting('default_calendar_id', defaultCalendar)
 
-  let count = 0
+  const timezone = validateTimezone(String(form.get('timezone') ?? ''))
+  if (!timezone.ok) {
+    return c.html(renderFragment(<span className="status-err">{timezone.error}</span>))
+  }
+
+  const settingsToSave: Array<[string, string]> = [
+    ['default_calendar_id', defaultCalendar],
+    ['timezone', timezone.value],
+  ]
   for (const f of SETTING_FIELDS) {
     if (f.type === 'bool') {
       const val = form.get(f.key) ? 'true' : 'false'
-      setSetting(f.key, val)
-      count++
+      settingsToSave.push([f.key, val])
     } else {
       const raw = form.get(f.key)
       if (raw !== null) {
-        setSetting(f.key, String(raw))
-        count++
+        settingsToSave.push([f.key, String(raw)])
       }
     }
   }
-  return c.html(renderFragment(<span className="status-ok">{`Saved ${count + 1} settings.`}</span>))
+
+  saveSettings(settingsToSave)
+  return c.html(renderFragment(<span className="status-ok">{`Saved ${settingsToSave.length} settings.`}</span>))
+})
+
+const saveSettings = db.transaction((settings: Array<[string, string]>) => {
+  for (const [key, value] of settings) {
+    setSetting(key, value)
+  }
 })
 
 async function loadWritableCalendars(): Promise<{ calendars: CalendarListEntry[]; error?: string }> {

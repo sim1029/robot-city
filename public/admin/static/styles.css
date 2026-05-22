@@ -247,6 +247,7 @@ tr#load-more-row:hover { background: transparent; }
 form .field { margin-bottom: 16px; }
 form label { display: block; margin-bottom: 6px; color: var(--fg-muted); }
 form input[type="text"],
+form input[type="search"],
 form input[type="number"],
 form input[type="password"],
 form select {
