@@ -100,4 +100,34 @@ describe('admin settings', () => {
     expect(body).toContain('status-err')
     expect(body).toContain('Choose a timezone from the list')
   })
+
+  test('does not partially save accepted settings when timezone is invalid', async () => {
+    const app = new Hono()
+    app.use('*', async (c, next) => {
+      c.set('csrf_token', 'test-csrf')
+      await next()
+    })
+    app.route('/admin/settings', settingsRoutes)
+
+    db.run(
+      `INSERT INTO user_settings (key, value) VALUES ('default_calendar_id', 'old-calendar')
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value`
+    )
+    db.run("UPDATE user_settings SET value = '7' WHERE key = 'brief_morning_hour'")
+
+    const form = new FormData()
+    form.set('default_calendar_id', 'primary')
+    form.set('timezone', 'GMT-5')
+    form.set('brief_morning_hour', '8')
+
+    const res = await app.request('/admin/settings', { method: 'POST', body: form })
+    const body = await res.text()
+    const calendar = db.query("SELECT value FROM user_settings WHERE key = 'default_calendar_id'").get() as { value: string }
+    const morningHour = db.query("SELECT value FROM user_settings WHERE key = 'brief_morning_hour'").get() as { value: string }
+
+    expect(res.status).toBe(200)
+    expect(body).toContain('status-err')
+    expect(calendar.value).toBe('old-calendar')
+    expect(morningHour.value).toBe('7')
+  })
 })

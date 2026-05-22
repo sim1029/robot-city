@@ -159,30 +159,36 @@ settingsRoutes.post('/', async (c) => {
   if (!validation.ok) {
     return c.html(renderFragment(<span className="status-err">{validation.error}</span>))
   }
-  setSetting('default_calendar_id', defaultCalendar)
 
-  let count = 0
   const timezone = validateTimezone(String(form.get('timezone') ?? ''))
   if (!timezone.ok) {
     return c.html(renderFragment(<span className="status-err">{timezone.error}</span>))
   }
-  setSetting('timezone', timezone.value)
-  count++
 
+  const settingsToSave: Array<[string, string]> = [
+    ['default_calendar_id', defaultCalendar],
+    ['timezone', timezone.value],
+  ]
   for (const f of SETTING_FIELDS) {
     if (f.type === 'bool') {
       const val = form.get(f.key) ? 'true' : 'false'
-      setSetting(f.key, val)
-      count++
+      settingsToSave.push([f.key, val])
     } else {
       const raw = form.get(f.key)
       if (raw !== null) {
-        setSetting(f.key, String(raw))
-        count++
+        settingsToSave.push([f.key, String(raw)])
       }
     }
   }
-  return c.html(renderFragment(<span className="status-ok">{`Saved ${count + 1} settings.`}</span>))
+
+  saveSettings(settingsToSave)
+  return c.html(renderFragment(<span className="status-ok">{`Saved ${settingsToSave.length} settings.`}</span>))
+})
+
+const saveSettings = db.transaction((settings: Array<[string, string]>) => {
+  for (const [key, value] of settings) {
+    setSetting(key, value)
+  }
 })
 
 async function loadWritableCalendars(): Promise<{ calendars: CalendarListEntry[]; error?: string }> {
