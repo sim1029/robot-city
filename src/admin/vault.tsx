@@ -210,14 +210,17 @@ vaultRoutes.post('/openai-chatgpt/callback', async (c) => {
     ), 400)
   }
   try {
-    await completeOAuthFlow(callbackUrl)
+    const tokenType = await completeOAuthFlow(callbackUrl)
+    const note = tokenType === 'api-key'
+      ? 'Saved Codex API key (full entitlement).'
+      : 'Saved OAuth access token (no Codex entitlement on this account — token expires; re-connect to refresh).'
     return c.html(renderFragment(
       <div className="vault-card" id="chatgpt-oauth-card">
         <div className="vault-head">
           <h3>openai (ChatGPT subscription)</h3>
           <div className="vault-status"><span className="status-ok">Connected</span></div>
         </div>
-        <p className="muted">OpenAI API key saved from ChatGPT subscription OAuth.</p>
+        <p className="muted">{note}</p>
         <div className="actions">
           <button
             type="button"
