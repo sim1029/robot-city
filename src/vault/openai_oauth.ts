@@ -117,6 +117,12 @@ export async function completeOAuthFlow(callbackUrl: string): Promise<void> {
 
   if (!keyResp.ok) {
     const text = await keyResp.text()
+    if (text.includes('token_exchange_user_error')) {
+      throw new Error(
+        'This ChatGPT account does not have Codex access. ' +
+        'ChatGPT Plus ($20/mo) does not include Codex CLI — ChatGPT Pro ($200/mo) is required.'
+      )
+    }
     throw new Error(`API key exchange failed (${keyResp.status}): ${text.slice(0, 200)}`)
   }
 
