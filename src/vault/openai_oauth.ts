@@ -67,7 +67,7 @@ function extractQueryParams(input: string): URLSearchParams {
   }
 }
 
-export async function completeOAuthFlow(callbackUrl: string): Promise<'api-key' | 'access-token'> {
+export async function completeOAuthFlow(callbackUrl: string): Promise<void> {
   const pendingRaw = getSetting(STATE_SETTING_KEY, '')
   if (!pendingRaw) throw new Error('No pending OAuth flow. Please start over.')
 
@@ -81,7 +81,6 @@ export async function completeOAuthFlow(callbackUrl: string): Promise<'api-key' 
   if (!code) throw new Error('No authorization code found in the pasted URL.')
   if (returnedState !== pending.state) throw new Error('State mismatch — possible CSRF. Please start over.')
 
-  // Exchange authorization code for tokens
   const tokenResp = await fetch(`${ISSUER}/oauth/token`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -99,41 +98,18 @@ export async function completeOAuthFlow(callbackUrl: string): Promise<'api-key' 
     throw new Error(`Token exchange failed (${tokenResp.status}): ${text.slice(0, 200)}`)
   }
 
-  const { id_token, access_token: oauthAccessToken } = (await tokenResp.json()) as {
-    id_token: string
+  const { access_token, refresh_token } = (await tokenResp.json()) as {
     access_token: string
+    refresh_token: string
   }
-  if (!id_token) throw new Error('Token exchange response missing id_token.')
+  if (!access_token) throw new Error('Token response missing access_token.')
+  if (!refresh_token) throw new Error('Token response missing refresh_token.')
 
-  // Try to exchange id_token for a dedicated Codex API key (requires Codex entitlement).
-  // Falls back to the OAuth access_token if the account doesn't have Codex access.
-  let apiKey: string | null = null
-  try {
-    const keyResp = await fetch(`${ISSUER}/oauth/token`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        grant_type: 'urn:ietf:params:oauth:grant-type:token-exchange',
-        client_id: CLIENT_ID,
-        requested_token: 'openai-api-key',
-        subject_token: id_token,
-        subject_token_type: 'urn:ietf:params:oauth:token-type:id_token',
-      }).toString(),
-    })
-    if (keyResp.ok) {
-      const body = (await keyResp.json()) as { access_token: string }
-      apiKey = body.access_token ?? null
-    }
-  } catch {
-    // ignore — fall back to access_token
-  }
-
-  const tokenToStore = apiKey ?? oauthAccessToken
-  if (!tokenToStore) throw new Error('No usable token returned from OpenAI OAuth.')
-
-  await setKey('openai', tokenToStore)
+  await Promise.all([
+    setKey('openai_access_token', access_token),
+    setKey('openai_refresh_token', refresh_token),
+  ])
   setSetting(STATE_SETTING_KEY, '')
-  return apiKey ? 'api-key' : 'access-token'
 }
 
 export function hasPendingOAuthFlow(): boolean {
