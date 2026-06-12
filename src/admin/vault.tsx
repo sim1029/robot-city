@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
 import { db } from '../db/client'
 import { setKey } from '../vault'
-import { initOAuthFlow, completeOAuthFlow, hasPendingOAuthFlow, cancelOAuthFlow } from '../vault/openai_oauth'
+import { initOAuthFlow, completeOAuthFlow, hasPendingOAuthFlow, getPendingAuthUrl, cancelOAuthFlow } from '../vault/openai_oauth'
 import { Layout } from './components/Layout'
 import { renderPage, renderFragment } from './render'
 
@@ -157,9 +157,10 @@ interface VaultPageProps {
   csrfToken: string
   byProvider: Map<string, VaultMetaRow>
   hasPendingOAuth: boolean
+  pendingAuthUrl?: string
 }
 
-function VaultPage({ csrfToken, byProvider, hasPendingOAuth }: VaultPageProps) {
+function VaultPage({ csrfToken, byProvider, hasPendingOAuth, pendingAuthUrl }: VaultPageProps) {
   return (
     <Layout title="Vault" csrfToken={csrfToken} currentPath="/admin/vault">
       <h2>BYOK vault</h2>
@@ -171,7 +172,7 @@ function VaultPage({ csrfToken, byProvider, hasPendingOAuth }: VaultPageProps) {
         {KNOWN_PROVIDERS.map((p) => (
           <VaultCard key={p} provider={p} row={byProvider.get(p)} />
         ))}
-        <ChatGPTOAuthCard hasPending={hasPendingOAuth} />
+        <ChatGPTOAuthCard hasPending={hasPendingOAuth} authUrl={pendingAuthUrl} />
       </div>
     </Layout>
   )
@@ -183,7 +184,8 @@ vaultRoutes.get('/', (c) => {
   const csrfToken = c.get('csrf_token') as string
   const rows = db.query('SELECT provider, updated_at FROM vault_keys').all() as VaultMetaRow[]
   const byProvider = new Map(rows.map((r) => [r.provider, r]))
-  return c.html(renderPage(<VaultPage csrfToken={csrfToken} byProvider={byProvider} hasPendingOAuth={hasPendingOAuthFlow()} />))
+  const hasPendingOAuth = hasPendingOAuthFlow()
+  return c.html(renderPage(<VaultPage csrfToken={csrfToken} byProvider={byProvider} hasPendingOAuth={hasPendingOAuth} pendingAuthUrl={hasPendingOAuth ? getPendingAuthUrl() : undefined} />))
 })
 
 vaultRoutes.post('/openai-chatgpt/init', async (c) => {

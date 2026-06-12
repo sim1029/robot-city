@@ -12,6 +12,7 @@ interface OAuthState {
   state: string
   codeVerifier: string
   expiresAt: number
+  authUrl: string
 }
 
 function base64url(buf: ArrayBuffer | Uint8Array): string {
@@ -35,9 +36,6 @@ export async function initOAuthFlow(): Promise<string> {
   const { codeVerifier, codeChallenge } = await generatePkce()
   const state = base64url(crypto.getRandomValues(new Uint8Array(32)))
 
-  const pending: OAuthState = { state, codeVerifier, expiresAt: Date.now() + STATE_TTL_MS }
-  setSetting(STATE_SETTING_KEY, JSON.stringify(pending))
-
   const params = new URLSearchParams({
     response_type: 'code',
     client_id: CLIENT_ID,
@@ -50,7 +48,11 @@ export async function initOAuthFlow(): Promise<string> {
     state,
   })
 
-  return `${ISSUER}/oauth/authorize?${params.toString()}`
+  const authUrl = `${ISSUER}/oauth/authorize?${params.toString()}`
+  const pending: OAuthState = { state, codeVerifier, expiresAt: Date.now() + STATE_TTL_MS, authUrl }
+  setSetting(STATE_SETTING_KEY, JSON.stringify(pending))
+
+  return authUrl
 }
 
 function extractQueryParams(input: string): URLSearchParams {
@@ -120,6 +122,18 @@ export function hasPendingOAuthFlow(): boolean {
     return Date.now() < pending.expiresAt
   } catch {
     return false
+  }
+}
+
+export function getPendingAuthUrl(): string | undefined {
+  const raw = getSetting(STATE_SETTING_KEY, '')
+  if (!raw) return undefined
+  try {
+    const pending: OAuthState = JSON.parse(raw)
+    if (Date.now() >= pending.expiresAt) return undefined
+    return pending.authUrl
+  } catch {
+    return undefined
   }
 }
 
