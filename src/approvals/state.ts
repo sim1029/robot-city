@@ -1,4 +1,6 @@
+import { eq, sql } from 'drizzle-orm'
 import { db } from '../db/client'
+import { pendingApprovals, sessions } from '../db/tables'
 
 export type ApprovalStatus = 'pending' | 'approved' | 'rejected' | 'expired'
 
@@ -43,24 +45,25 @@ export interface CreateArgs {
 export function createApproval(args: CreateArgs): string {
   const id = crypto.randomUUID()
   if (args.sessionId) {
-    db.run(
-      `INSERT OR IGNORE INTO sessions (id, created_at, total_cost_usd) VALUES (?, ?, 0)`,
-      [args.sessionId, Date.now()]
-    )
+    db.insert(sessions)
+      .values({ id: args.sessionId, createdAt: Date.now(), totalCostUsd: 0 })
+      .onConflictDoNothing()
+      .run()
   }
-  db.run(
-    `INSERT INTO pending_approvals (id, action, payload, status, session_id)
-     VALUES (?, ?, ?, 'pending', ?)`,
-    [id, args.action, JSON.stringify(args.payload ?? {}), args.sessionId ?? null]
-  )
+  db.insert(pendingApprovals)
+    .values({
+      id,
+      action: args.action,
+      payload: JSON.stringify(args.payload ?? {}),
+      status: 'pending',
+      sessionId: args.sessionId ?? null,
+    })
+    .run()
   return id
 }
 
 export function getApproval(id: string): Approval | null {
-  const row = db.query(
-    `SELECT id, action, payload, status, session_id, discord_message_id, reject_reason, handler_result, created_at, resolved_at
-     FROM pending_approvals WHERE id = ?`
-  ).get(id) as RawApprovalRow | null
+  const row = db.select().from(pendingApprovals).where(eq(pendingApprovals.id, id)).get()
   if (!row) return null
   return hydrate(row)
 }
@@ -80,10 +83,10 @@ export async function approveApproval(id: string): Promise<ApprovedResult> {
   if (!handler) throw new Error(`No handler registered for action "${a.action}"`)
 
   const result = await handler(a.payload, a)
-  db.run(
-    `UPDATE pending_approvals SET status = 'approved', handler_result = ?, resolved_at = unixepoch() WHERE id = ?`,
-    [JSON.stringify(result ?? null), id]
-  )
+  db.update(pendingApprovals)
+    .set({ status: 'approved', handlerResult: JSON.stringify(result ?? null), resolvedAt: sql`unixepoch()` })
+    .where(eq(pendingApprovals.id, id))
+    .run()
   return { status: 'approved', handler_result: result }
 }
 
@@ -93,24 +96,24 @@ export async function rejectApproval(id: string, reason?: string): Promise<void>
   if (a.status !== 'pending') {
     throw new ApprovalStateError(`Approval ${id} is ${a.status}, cannot reject`)
   }
-  db.run(
-    `UPDATE pending_approvals SET status = 'rejected', reject_reason = ?, resolved_at = unixepoch() WHERE id = ?`,
-    [reason ?? null, id]
-  )
+  db.update(pendingApprovals)
+    .set({ status: 'rejected', rejectReason: reason ?? null, resolvedAt: sql`unixepoch()` })
+    .where(eq(pendingApprovals.id, id))
+    .run()
 }
 
 export async function expireApproval(id: string): Promise<void> {
   const a = getApproval(id)
   if (!a) throw new ApprovalStateError(`Approval ${id} not found`)
   if (a.status !== 'pending') return
-  db.run(
-    `UPDATE pending_approvals SET status = 'expired', resolved_at = unixepoch() WHERE id = ?`,
-    [id]
-  )
+  db.update(pendingApprovals)
+    .set({ status: 'expired', resolvedAt: sql`unixepoch()` })
+    .where(eq(pendingApprovals.id, id))
+    .run()
 }
 
 export function setApprovalDiscordMessage(id: string, discordMessageId: string): void {
-  db.run('UPDATE pending_approvals SET discord_message_id = ? WHERE id = ?', [discordMessageId, id])
+  db.update(pendingApprovals).set({ discordMessageId }).where(eq(pendingApprovals.id, id)).run()
 }
 
 export function updateApprovalPayload(id: string, patch: Record<string, unknown>): void {
@@ -118,33 +121,20 @@ export function updateApprovalPayload(id: string, patch: Record<string, unknown>
   if (!a) throw new ApprovalStateError(`Approval ${id} not found`)
   if (a.status !== 'pending') throw new ApprovalStateError(`Approval ${id} is ${a.status}, cannot update payload`)
   const merged = { ...(a.payload as Record<string, unknown>), ...patch }
-  db.run('UPDATE pending_approvals SET payload = ? WHERE id = ?', [JSON.stringify(merged), id])
+  db.update(pendingApprovals).set({ payload: JSON.stringify(merged) }).where(eq(pendingApprovals.id, id)).run()
 }
 
-interface RawApprovalRow {
-  id: string
-  action: string
-  payload: string
-  status: ApprovalStatus
-  session_id: string | null
-  discord_message_id: string | null
-  reject_reason: string | null
-  handler_result: string | null
-  created_at: number
-  resolved_at: number | null
-}
-
-function hydrate(row: RawApprovalRow): Approval {
+function hydrate(row: typeof pendingApprovals.$inferSelect): Approval {
   return {
     id: row.id,
     action: row.action,
     payload: JSON.parse(row.payload),
-    status: row.status,
-    session_id: row.session_id,
-    discord_message_id: row.discord_message_id,
-    reject_reason: row.reject_reason,
-    handler_result: row.handler_result == null ? null : JSON.parse(row.handler_result),
-    created_at: row.created_at,
-    resolved_at: row.resolved_at,
+    status: row.status as ApprovalStatus,
+    session_id: row.sessionId,
+    discord_message_id: row.discordMessageId,
+    reject_reason: row.rejectReason,
+    handler_result: row.handlerResult == null ? null : JSON.parse(row.handlerResult),
+    created_at: row.createdAt,
+    resolved_at: row.resolvedAt,
   }
 }

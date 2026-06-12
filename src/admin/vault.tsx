@@ -1,5 +1,7 @@
 import { Hono } from 'hono'
+import { eq } from 'drizzle-orm'
 import { db } from '../db/client'
+import { vaultKeys } from '../db/tables'
 import { setKey } from '../vault'
 import { initOAuthFlow, completeOAuthFlow, hasPendingOAuthFlow, getPendingAuthUrl, cancelOAuthFlow } from '../vault/openai_oauth'
 import { Layout } from './components/Layout'
@@ -182,7 +184,7 @@ export const vaultRoutes = new Hono()
 
 vaultRoutes.get('/', (c) => {
   const csrfToken = c.get('csrf_token') as string
-  const rows = db.query('SELECT provider, updated_at FROM vault_keys').all() as VaultMetaRow[]
+  const rows: VaultMetaRow[] = db.select({ provider: vaultKeys.provider, updated_at: vaultKeys.updatedAt }).from(vaultKeys).all()
   const byProvider = new Map(rows.map((r) => [r.provider, r]))
   const hasPendingOAuth = hasPendingOAuthFlow()
   return c.html(renderPage(<VaultPage csrfToken={csrfToken} byProvider={byProvider} hasPendingOAuth={hasPendingOAuth} pendingAuthUrl={hasPendingOAuth ? getPendingAuthUrl() : undefined} />))
@@ -282,6 +284,6 @@ vaultRoutes.post('/:provider/delete', (c) => {
   if (!KNOWN_PROVIDERS.includes(provider as Provider)) {
     return c.html(renderFragment(<span className="status-err">Unknown provider.</span>), 400)
   }
-  db.run('DELETE FROM vault_keys WHERE provider = ?', [provider])
+  db.delete(vaultKeys).where(eq(vaultKeys.provider, provider)).run()
   return c.html(renderFragment(<span className="status-ok">Deleted.</span>))
 })

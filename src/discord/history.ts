@@ -1,4 +1,6 @@
+import { and, asc, eq, isNotNull } from 'drizzle-orm'
 import { db } from '../db/client'
+import { events } from '../db/tables'
 
 const DISCORD_API = 'https://discord.com/api/v10'
 const FOOTER_SEPARATOR = '─────────────────────────────────'
@@ -67,14 +69,15 @@ function mergeTranscriptIntoUserContent(content: string, transcript: string): st
 }
 
 function loadAudioTranscripts(threadId: string): Map<string, string> {
-  const rows = db.query(
-    `SELECT payload, output
-     FROM events
-     WHERE session_id = ?
-       AND type = 'audio:transcription'
-       AND output IS NOT NULL
-     ORDER BY id ASC`
-  ).all(`discord:${threadId}`) as Array<{ payload: string | null; output: string | null }>
+  const rows = db.select({ payload: events.payload, output: events.output })
+    .from(events)
+    .where(and(
+      eq(events.sessionId, `discord:${threadId}`),
+      eq(events.type, 'audio:transcription'),
+      isNotNull(events.output),
+    ))
+    .orderBy(asc(events.id))
+    .all()
 
   const transcripts = new Map<string, string>()
   for (const row of rows) {

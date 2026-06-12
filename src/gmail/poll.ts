@@ -1,4 +1,5 @@
 import { db } from '../db/client'
+import { events } from '../db/tables'
 import { listHistory, getProfile, GmailHistoryGoneError } from './client'
 import { getValidGmailAccessToken, loadGmailTokens, setGmailHistoryId } from './tokens'
 
@@ -41,12 +42,11 @@ export async function pollGmail(userId: string): Promise<PollOutcome> {
 }
 
 function logGapEvent(userId: string, fromHistoryId: string, recoveredHistoryId: string) {
-  db.run(
-    `INSERT INTO events (session_id, type, payload) VALUES (?, ?, ?)`,
-    [
-      null,
-      'gmail:gap',
-      JSON.stringify({ user_id: userId, from_history_id: fromHistoryId, recovered_history_id: recoveredHistoryId }),
-    ]
-  )
+  db.insert(events)
+    .values({
+      sessionId: null,
+      type: 'gmail:gap',
+      payload: JSON.stringify({ user_id: userId, from_history_id: fromHistoryId, recovered_history_id: recoveredHistoryId }),
+    })
+    .run()
 }

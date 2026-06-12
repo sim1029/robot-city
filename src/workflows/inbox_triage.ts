@@ -1,4 +1,5 @@
 import { db } from '../db/client'
+import { events } from '../db/tables'
 import { getMessage } from '../gmail/client'
 import { getValidGmailAccessToken } from '../gmail/tokens'
 import { runStage } from '../stages/runner'
@@ -66,20 +67,19 @@ export async function triageMessage(input: TriageInput): Promise<TriageResult> {
     draft = split.draft
   }
 
-  db.run(
-    `INSERT INTO events (session_id, type, payload) VALUES (?, ?, ?)`,
-    [
-      input.sessionId,
-      'workflow:triage',
-      JSON.stringify({
+  db.insert(events)
+    .values({
+      sessionId: input.sessionId,
+      type: 'workflow:triage',
+      payload: JSON.stringify({
         message_id: input.messageId,
         from,
         subject,
         classification,
         cost_usd: costUsd,
       }),
-    ]
-  )
+    })
+    .run()
 
   return {
     messageId: input.messageId,

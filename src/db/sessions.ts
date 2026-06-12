@@ -1,22 +1,29 @@
+import { and, count, eq, isNull, like, sql } from 'drizzle-orm'
 import { db } from './client'
+import { events, sessions } from './tables'
 
 export function ensureSession(sessionId: string): void {
   const discordThreadId = sessionId.startsWith('discord:') ? sessionId.slice('discord:'.length) : null
-  db.run(
-    `INSERT OR IGNORE INTO sessions (id, discord_thread_id, created_at, total_cost_usd)
-     VALUES (?, ?, unixepoch(), 0)`,
-    [sessionId, discordThreadId]
-  )
+  db.insert(sessions)
+    .values({ id: sessionId, discordThreadId, totalCostUsd: 0 })
+    .onConflictDoNothing()
+    .run()
 }
 
 export function bumpSessionCost(sessionId: string, costUsd: number): void {
   ensureSession(sessionId)
-  db.run('UPDATE sessions SET total_cost_usd = total_cost_usd + ? WHERE id = ?', [costUsd, sessionId])
+  db.update(sessions)
+    .set({ totalCostUsd: sql`${sessions.totalCostUsd} + ${costUsd}` })
+    .where(eq(sessions.id, sessionId))
+    .run()
 }
 
 export function getSessionCost(sessionId: string): number {
-  const row = db.query('SELECT total_cost_usd FROM sessions WHERE id = ?').get(sessionId) as { total_cost_usd: number } | null
-  return row?.total_cost_usd ?? 0
+  const row = db.select({ totalCostUsd: sessions.totalCostUsd })
+    .from(sessions)
+    .where(eq(sessions.id, sessionId))
+    .get()
+  return row?.totalCostUsd ?? 0
 }
 
 export interface SessionStats {
@@ -31,38 +38,44 @@ export interface SessionStats {
 }
 
 export function computeSessionStats(sessionId: string): SessionStats | null {
-  const sessionRow = db.query(
-    `SELECT id, discord_thread_id, total_cost_usd, closed_at FROM sessions WHERE id = ?`
-  ).get(sessionId) as { id: string; discord_thread_id: string | null; total_cost_usd: number; closed_at: number | null } | null
+  const sessionRow = db.select({
+    id: sessions.id,
+    discordThreadId: sessions.discordThreadId,
+    totalCostUsd: sessions.totalCostUsd,
+    closedAt: sessions.closedAt,
+  }).from(sessions).where(eq(sessions.id, sessionId)).get()
   if (!sessionRow) return null
 
-  const tokens = db.query(
-    `SELECT
-       COALESCE(SUM(input_tokens), 0)  AS input_tokens,
-       COALESCE(SUM(output_tokens), 0) AS output_tokens
-     FROM events WHERE session_id = ?`
-  ).get(sessionId) as { input_tokens: number; output_tokens: number }
+  const tokens = db.select({
+    inputTokens: sql<number>`COALESCE(SUM(${events.inputTokens}), 0)`,
+    outputTokens: sql<number>`COALESCE(SUM(${events.outputTokens}), 0)`,
+  }).from(events).where(eq(events.sessionId, sessionId)).get()!
 
-  const msgRow = db.query(
-    `SELECT COUNT(*) AS n FROM events WHERE session_id = ? AND type = 'stage:reason'`
-  ).get(sessionId) as { n: number }
+  const msgRow = db.select({ n: count() })
+    .from(events)
+    .where(and(eq(events.sessionId, sessionId), eq(events.type, 'stage:reason')))
+    .get()!
 
-  const toolRow = db.query(
-    `SELECT COUNT(*) AS n FROM events WHERE session_id = ? AND type LIKE 'tool:%'`
-  ).get(sessionId) as { n: number }
+  const toolRow = db.select({ n: count() })
+    .from(events)
+    .where(and(eq(events.sessionId, sessionId), like(events.type, 'tool:%')))
+    .get()!
 
   return {
     sessionId: sessionRow.id,
-    threadId: sessionRow.discord_thread_id,
-    totalCostUsd: sessionRow.total_cost_usd,
-    totalInputTokens: tokens.input_tokens,
-    totalOutputTokens: tokens.output_tokens,
+    threadId: sessionRow.discordThreadId,
+    totalCostUsd: sessionRow.totalCostUsd,
+    totalInputTokens: tokens.inputTokens,
+    totalOutputTokens: tokens.outputTokens,
     messageCount: msgRow.n,
     toolCount: toolRow.n,
-    closedAt: sessionRow.closed_at,
+    closedAt: sessionRow.closedAt,
   }
 }
 
 export function markSessionClosed(sessionId: string): void {
-  db.run('UPDATE sessions SET closed_at = unixepoch() WHERE id = ? AND closed_at IS NULL', [sessionId])
+  db.update(sessions)
+    .set({ closedAt: sql`unixepoch()` })
+    .where(and(eq(sessions.id, sessionId), isNull(sessions.closedAt)))
+    .run()
 }

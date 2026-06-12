@@ -2,8 +2,10 @@
 import { Hono } from 'hono'
 import { getOAuthUrl, exchangeCode, getCurrentUser } from '../discord/oauth'
 import { getOrCreateForumChannel } from '../discord/setup'
+import { sql } from 'drizzle-orm'
 import { migrate } from '../db/schema'
 import { db } from '../db/client'
+import { discordTokens } from '../db/tables'
 
 migrate()
 
@@ -55,16 +57,24 @@ app.get('/auth/discord/callback', async (c) => {
       return c.html(errorPage('No server selected — please run init again and choose a Discord server when prompted'))
     }
 
-    db.run(
-      `INSERT INTO discord_tokens (user_id, access_token, refresh_token, expires_at, guild_id)
-       VALUES (?, ?, ?, ?, ?)
-       ON CONFLICT(user_id) DO UPDATE SET
-         access_token = excluded.access_token,
-         refresh_token = excluded.refresh_token,
-         expires_at = excluded.expires_at,
-         guild_id = excluded.guild_id`,
-      [user.id, tokens.access_token, tokens.refresh_token, Date.now() + tokens.expires_in * 1000, guildId]
-    )
+    db.insert(discordTokens)
+      .values({
+        userId: user.id,
+        accessToken: tokens.access_token,
+        refreshToken: tokens.refresh_token,
+        expiresAt: Date.now() + tokens.expires_in * 1000,
+        guildId,
+      })
+      .onConflictDoUpdate({
+        target: discordTokens.userId,
+        set: {
+          accessToken: sql`excluded.access_token`,
+          refreshToken: sql`excluded.refresh_token`,
+          expiresAt: sql`excluded.expires_at`,
+          guildId: sql`excluded.guild_id`,
+        },
+      })
+      .run()
 
     resolveSetup({ guildId, userId: user.id, username: user.username })
     return c.html(successPage(user.username))

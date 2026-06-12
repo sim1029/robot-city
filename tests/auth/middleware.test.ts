@@ -1,6 +1,6 @@
 import { describe, expect, test, beforeAll, beforeEach, afterAll } from 'bun:test'
 import { Hono } from 'hono'
-import { db } from '../../src/db/client'
+import { sqlite as db } from '../../src/db/client'
 import { migrate } from '../../src/db/schema'
 import { createSession } from '../../src/auth/sessions'
 import { requireOwner, csrf } from '../../src/auth/middleware'

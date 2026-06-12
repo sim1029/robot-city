@@ -1,19 +1,23 @@
+import { eq, sql } from 'drizzle-orm'
 import { db } from './client'
+import { userSettings } from './tables'
 
 export function getSetting(key: string, defaultValue: string): string {
-  const row = db.query('SELECT value FROM user_settings WHERE key = ?').get(key) as { value: string } | null
+  const row = db.select({ value: userSettings.value }).from(userSettings).where(eq(userSettings.key, key)).get()
   return row?.value ?? defaultValue
 }
 
 export function setSetting(key: string, value: string): void {
-  db.run(
-    `INSERT INTO user_settings (key, value) VALUES (?, ?)
-     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = unixepoch()`,
-    [key, value]
-  )
+  db.insert(userSettings)
+    .values({ key, value })
+    .onConflictDoUpdate({
+      target: userSettings.key,
+      set: { value: sql`excluded.value`, updatedAt: sql`unixepoch()` },
+    })
+    .run()
 }
 
 export function getAllSettings(): Record<string, string> {
-  const rows = db.query('SELECT key, value FROM user_settings').all() as Array<{ key: string; value: string }>
+  const rows = db.select({ key: userSettings.key, value: userSettings.value }).from(userSettings).all()
   return Object.fromEntries(rows.map(r => [r.key, r.value]))
 }

@@ -3,6 +3,7 @@ import { getAllSettings, setSetting } from '../db/settings'
 import { Layout } from './components/Layout'
 import { renderPage, renderFragment } from './render'
 import { db } from '../db/client'
+import { gmailTokens } from '../db/tables'
 import { formatCalendarLabel, listWritableCalendarsForUser, PRIMARY_CALENDAR_ID } from '../calendar/defaults'
 import type { CalendarListEntry } from '../calendar/client'
 import { normalizeTimezoneValue, timezoneOptions, validateTimezone } from '../timezones'
@@ -185,18 +186,20 @@ settingsRoutes.post('/', async (c) => {
   return c.html(renderFragment(<span className="status-ok">{`Saved ${settingsToSave.length} settings.`}</span>))
 })
 
-const saveSettings = db.transaction((settings: Array<[string, string]>) => {
-  for (const [key, value] of settings) {
-    setSetting(key, value)
-  }
-})
+function saveSettings(settings: Array<[string, string]>): void {
+  db.transaction(() => {
+    for (const [key, value] of settings) {
+      setSetting(key, value)
+    }
+  })
+}
 
 async function loadWritableCalendars(): Promise<{ calendars: CalendarListEntry[]; error?: string }> {
-  const gmailRow = db.query('SELECT user_id FROM gmail_tokens LIMIT 1').get() as { user_id: string } | null
+  const gmailRow = db.select({ userId: gmailTokens.userId }).from(gmailTokens).limit(1).get()
   if (!gmailRow) return { calendars: [] }
 
   try {
-    return { calendars: await listWritableCalendarsForUser(gmailRow.user_id) }
+    return { calendars: await listWritableCalendarsForUser(gmailRow.userId) }
   } catch (err) {
     return {
       calendars: [],
@@ -208,13 +211,13 @@ async function loadWritableCalendars(): Promise<{ calendars: CalendarListEntry[]
 async function validateDefaultCalendar(calendarId: string): Promise<{ ok: true } | { ok: false; error: string }> {
   if (calendarId === PRIMARY_CALENDAR_ID) return { ok: true }
 
-  const gmailRow = db.query('SELECT user_id FROM gmail_tokens LIMIT 1').get() as { user_id: string } | null
+  const gmailRow = db.select({ userId: gmailTokens.userId }).from(gmailTokens).limit(1).get()
   if (!gmailRow) {
     return { ok: false, error: 'Connect Google before selecting a non-primary default calendar.' }
   }
 
   try {
-    const calendars = await listWritableCalendarsForUser(gmailRow.user_id)
+    const calendars = await listWritableCalendarsForUser(gmailRow.userId)
     if (calendars.some((c) => c.id === calendarId)) return { ok: true }
     return { ok: false, error: 'Selected calendar was not found in writable Google calendars.' }
   } catch (err) {

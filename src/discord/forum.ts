@@ -1,4 +1,6 @@
+import { isNotNull } from 'drizzle-orm'
 import { db } from '../db/client'
+import { discordTokens } from '../db/tables'
 import { DEFAULT_FORUM_NAME, getOrCreateForumChannel } from './setup'
 
 interface ResolvedForum {
@@ -12,10 +14,12 @@ let cached: ResolvedForum | null = null
 function lookupGuildId(): string {
   const fromEnv = process.env.DISCORD_GUILD_ID?.trim()
   if (fromEnv) return fromEnv
-  const row = db.query('SELECT guild_id FROM discord_tokens WHERE guild_id IS NOT NULL LIMIT 1').get() as
-    | { guild_id: string | null }
-    | null
-  if (row?.guild_id) return row.guild_id
+  const row = db.select({ guildId: discordTokens.guildId })
+    .from(discordTokens)
+    .where(isNotNull(discordTokens.guildId))
+    .limit(1)
+    .get()
+  if (row?.guildId) return row.guildId
   throw new Error(
     'No Discord guild ID available. Set DISCORD_GUILD_ID in your env or run `bun run init` to install the bot.',
   )

@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs'
 import { basename, join } from 'node:path'
-import { db } from '../db/client'
+import { sqlite } from '../db/client'
 import { sendDm, sendDmFile } from '../discord/dm'
 
 const DISCORD_MAX_BYTES = 8 * 1024 * 1024
@@ -18,7 +18,7 @@ export async function sendDbBackup(discordUserId: string): Promise<void> {
   }
 
   // Flush WAL frames into the main file before reading it
-  db.run('PRAGMA wal_checkpoint(FULL)')
+  sqlite.run('PRAGMA wal_checkpoint(FULL)')
 
   const proc = Bun.spawn(['gzip', '-c', dbPath], { stdout: 'pipe', stderr: 'inherit' })
   const [compressedBytes, exitCode] = await Promise.all([

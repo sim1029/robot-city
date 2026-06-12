@@ -1,5 +1,5 @@
 import { describe, expect, test, beforeAll, beforeEach } from 'bun:test'
-import { db } from '../../src/db/client'
+import { sqlite as db } from '../../src/db/client'
 import { migrate } from '../../src/db/schema'
 import {
   createApproval,

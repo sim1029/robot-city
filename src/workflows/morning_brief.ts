@@ -1,4 +1,6 @@
+import { and, desc, eq, gt } from 'drizzle-orm'
 import { db } from '../db/client'
+import { events } from '../db/tables'
 import { getValidGmailAccessToken } from '../gmail/tokens'
 import { readCalendar } from '../tools/read_calendar'
 import { runStage } from '../stages/runner'
@@ -25,14 +27,17 @@ export async function generateBrief(opts: BriefOpts): Promise<void> {
   )
 
   const since = Math.floor(Date.now() / 1000) - 86400
-  const triageRows = db.query(
-    `SELECT payload FROM events WHERE type = 'workflow:triage' AND created_at > ? ORDER BY created_at DESC LIMIT 10`
-  ).all(since) as Array<{ payload: string }>
+  const triageRows = db.select({ payload: events.payload })
+    .from(events)
+    .where(and(eq(events.type, 'workflow:triage'), gt(events.createdAt, since)))
+    .orderBy(desc(events.createdAt))
+    .limit(10)
+    .all()
 
   const emailLines = triageRows
     .map(r => {
       try {
-        const p = JSON.parse(r.payload) as { from?: string; subject?: string; classification?: string }
+        const p = JSON.parse(r.payload ?? 'null') as { from?: string; subject?: string; classification?: string }
         if (p.classification === 'ignore') return null
         return `• [${p.classification?.toUpperCase()}] ${p.subject ?? '(no subject)'} from ${p.from ?? 'unknown'}`
       } catch {
@@ -66,17 +71,16 @@ export async function generateBrief(opts: BriefOpts): Promise<void> {
 
   await sendThreadMessage(dmChannelId, content)
 
-  db.run(
-    `INSERT INTO events (session_id, type, model, input_tokens, output_tokens, cost_usd, latency_ms, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      null,
-      'workflow:brief',
-      result.model,
-      result.inputTokens,
-      result.outputTokens,
-      result.costUsd,
-      result.latencyMs,
-      JSON.stringify({ label: opts.label, cost_usd: result.costUsd }),
-    ]
-  )
+  db.insert(events)
+    .values({
+      sessionId: null,
+      type: 'workflow:brief',
+      model: result.model,
+      inputTokens: result.inputTokens,
+      outputTokens: result.outputTokens,
+      costUsd: result.costUsd,
+      latencyMs: result.latencyMs,
+      payload: JSON.stringify({ label: opts.label, cost_usd: result.costUsd }),
+    })
+    .run()
 }

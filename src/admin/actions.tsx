@@ -1,5 +1,6 @@
 import { Hono } from 'hono'
 import { db } from '../db/client'
+import { discordTokens, gmailTokens } from '../db/tables'
 import { generateBrief } from '../workflows/morning_brief'
 import { getProfile } from '../gmail/client'
 import { saveGmailTokens } from '../gmail/tokens'
@@ -98,14 +99,14 @@ actionsRoutes.post('/run-brief', async (c) => {
   const labelArg = String(form.get('brief-label') ?? 'morning')
   const label = (['morning', 'midday', 'evening'].includes(labelArg) ? labelArg : 'morning') as 'morning' | 'midday' | 'evening'
 
-  const gmailRow = db.query('SELECT user_id FROM gmail_tokens LIMIT 1').get() as { user_id: string } | null
-  const discordRow = db.query('SELECT user_id FROM discord_tokens LIMIT 1').get() as { user_id: string } | null
+  const gmailRow = db.select({ userId: gmailTokens.userId }).from(gmailTokens).limit(1).get()
+  const discordRow = db.select({ userId: discordTokens.userId }).from(discordTokens).limit(1).get()
   if (!gmailRow || !discordRow) {
     return c.html(renderFragment(<span className="status-err">Connect Gmail and Discord first.</span>), 400)
   }
 
   try {
-    await generateBrief({ gmailUserId: gmailRow.user_id, discordUserId: discordRow.user_id, label })
+    await generateBrief({ gmailUserId: gmailRow.userId, discordUserId: discordRow.userId, label })
     return c.html(renderFragment(<span className="status-ok">{`${label} brief queued.`}</span>))
   } catch (err) {
     return c.html(renderFragment(<span className="status-err">{`Failed: ${String(err)}`}</span>), 500)
@@ -113,19 +114,23 @@ actionsRoutes.post('/run-brief', async (c) => {
 })
 
 actionsRoutes.post('/rebaseline-gmail', async (c) => {
-  const gmailRow = db.query('SELECT user_id, access_token, refresh_token, expires_at, scope FROM gmail_tokens LIMIT 1').get() as {
-    user_id: string; access_token: string; refresh_token: string; expires_at: number; scope: string
-  } | null
+  const gmailRow = db.select({
+    userId: gmailTokens.userId,
+    accessToken: gmailTokens.accessToken,
+    refreshToken: gmailTokens.refreshToken,
+    expiresAt: gmailTokens.expiresAt,
+    scope: gmailTokens.scope,
+  }).from(gmailTokens).limit(1).get()
   if (!gmailRow) {
     return c.html(renderFragment(<span className="status-err">No Gmail account connected.</span>), 400)
   }
   try {
-    const profile = await getProfile(gmailRow.access_token)
+    const profile = await getProfile(gmailRow.accessToken)
     saveGmailTokens({
-      user_id: gmailRow.user_id,
-      access_token: gmailRow.access_token,
-      refresh_token: gmailRow.refresh_token,
-      expires_at: gmailRow.expires_at,
+      user_id: gmailRow.userId,
+      access_token: gmailRow.accessToken,
+      refresh_token: gmailRow.refreshToken,
+      expires_at: gmailRow.expiresAt,
       scope: gmailRow.scope,
       history_id: profile.historyId,
     })

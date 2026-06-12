@@ -1,6 +1,6 @@
 import { describe, expect, test, beforeAll, beforeEach, afterEach, afterAll } from 'bun:test'
 import { installFetchMock, uninstallFetchMock, resetFetchMock, fetchCalls, mockFetch } from '../_helpers/fetch-mock'
-import { db } from '../../src/db/client'
+import { sqlite as db } from '../../src/db/client'
 import { migrate } from '../../src/db/schema'
 import { isPaused, setPaused } from '../../src/system/pause'
 import { runTriageTick } from '../../src/gmail/triage_loop'

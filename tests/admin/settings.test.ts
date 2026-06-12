@@ -1,6 +1,6 @@
 import { beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 import { Hono } from 'hono'
-import { db } from '../../src/db/client'
+import { sqlite as db } from '../../src/db/client'
 import { migrate } from '../../src/db/schema'
 import { settingsRoutes } from '../../src/admin/settings'
 

@@ -14,7 +14,7 @@ First party "jobs" can be selected for your assistant to schedule and execute ea
 
 - **Runtime:** Bun (uses `bun:sqlite`, native TS — no `ts-node`, no `tsc` build step at runtime)
 - **HTTP:** Hono
-- **DB:** SQLite via `bun:sqlite` (file at `data/robot-city.db`)
+- **DB:** SQLite via `bun:sqlite` (file at `data/robot-city.db`), queried through Drizzle ORM (`drizzle-orm/bun-sqlite`)
 - **Discord:** `discord.js` v14
 - **LLM clients:** hand-rolled per provider in `src/providers/` — **do not introduce `ai`, `@ai-sdk/*`, LangChain, or similar**
 - **Admin UI:** React 19 server-rendered via `react-dom/server` (`renderToStaticMarkup`). No client React, no hydration, no bundler — Bun transpiles `.tsx` natively. HTMX still drives form interactions.
@@ -41,7 +41,8 @@ src/
   tools/                # send_email, create_calendar_event (no approval), invite_attendees, read_calendar
   providers/            # router.ts + per-provider clients (anthropic, openai, google)
   stages/               # runner.ts, gather.ts (code-only data fetch), act_dispatcher.ts, types.ts
-  db/                   # schema.ts + client.ts (bun:sqlite) + settings.ts (user_settings KV helpers)
+  db/                   # schema.ts (raw DDL migrate) + tables.ts (Drizzle table defs, mirror schema.ts)
+                        #   + client.ts (exports Drizzle `db` + raw `sqlite`) + settings.ts (KV helpers)
                         #   + sessions.ts (cost accumulator, discord_thread linkage, stats, close)
                         #   + snapshot.ts (pre-migration backups, last 5 kept under /data/snapshots/)
   cron/                 # scheduler.ts: setInterval tick for morning/midday/evening briefs
@@ -93,6 +94,7 @@ Tests live under `tests/` and use `bun test`. Stub HTTP via `installFetchMock()`
 - **Approval gating:** outbound human-facing tools (`send_email`, `invite_attendees`) require Discord button confirm. Self-only tools don't. If you add a tool, decide which bucket it's in.
 - **Approvals are a state machine, not a queue.** Tools that need confirmation create a `pending_approvals` row via `createApproval` and register a handler with `registerApprovalHandler(action, fn)`. The handler runs ONLY on `approveApproval(id)`. See `src/tools/send_email.ts` for the canonical shape — never bypass.
 - **Gmail history-gone recovery:** `pollGmail` re-baselines from `users.getProfile().historyId` on a 404 from `users.history.list` (Gmail drops history >7d). The gap is intentionally skipped and logged as `gmail:gap`. Don't try to backfill — use `messages.list` with a label filter if you need that later.
+- **Queries go through Drizzle (`db` from `src/db/client.ts`); the raw `sqlite` handle is for DDL/PRAGMA/FTS5 only.** Schema creation stays raw SQL in `schema.ts` `migrate()` (idempotent, boot-time, no drizzle-kit); the Drizzle table defs in `src/db/tables.ts` mirror it — if you ALTER a table in `migrate()`, update `tables.ts` in the same commit. FTS5 `MATCH`/`rank` queries (contacts search) can't be expressed in Drizzle and stay raw.
 - **The 5 tools are the product.** Don't add tools casually — `SPEC.md` §"The 5 tools" is the contract.
 
 ## Admin UI conventions

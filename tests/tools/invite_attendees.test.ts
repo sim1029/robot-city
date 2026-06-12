@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 import { approveApproval, getApproval, resetApprovalHandlersForTest } from '../../src/approvals/state'
-import { db } from '../../src/db/client'
+import { sqlite as db } from '../../src/db/client'
 import { insertEvent } from '../../src/db/events'
 import { migrate } from '../../src/db/schema'
 import { saveGmailTokens } from '../../src/gmail/tokens'
