@@ -8,8 +8,9 @@ import { runStage, buildFooter } from '../stages/runner'
 import type { StageResult } from '../stages/types'
 import { gatherForIntent } from '../stages/gather'
 import { dispatchToolCall } from '../stages/act_dispatcher'
-import { buildApprovalCardPayload, buildEditModal, buildResolvedCardPayload, type DiscordModal, parseApprovalCustomId } from './approval_card'
+import { buildApprovalCardPayload, buildEditModal, buildReauthCardPayload, buildResolvedCardPayload, type DiscordModal, parseApprovalCustomId } from './approval_card'
 import { editChannelMessage, sendApprovalCardForApproval, sendThreadMessage, sendTypingIndicator } from './dm'
+import { getReauthUrl } from '../gmail/oauth'
 import { fetchThreadHistory } from './history'
 import { getSetting } from '../db/settings'
 import { isPaused } from '../system/pause'
@@ -212,6 +213,21 @@ export async function handleEditModalSubmit(args: {
   return { kind: 'edited' }
 }
 
+interface PendingRetry {
+  threadId: string
+  userId: string
+  messageId: string
+  content: string
+}
+
+const pendingRetries = new Map<string, PendingRetry>()
+
+export function consumeReauthRetry(retryId: string): PendingRetry | null {
+  const retry = pendingRetries.get(retryId) ?? null
+  if (retry) pendingRetries.delete(retryId)
+  return retry
+}
+
 export async function handleThreadMessage(args: {
   threadId: string
   userId: string
@@ -310,6 +326,19 @@ export async function handleThreadMessage(args: {
         toolResultBlocks.push({ type: 'tool_result', tool_use_id: tc.id, content: 'Action is pending user approval.' })
         shouldStop = true
         break
+      }
+      if (dispatch.kind === 'auth_expired') {
+        const retryId = crypto.randomUUID()
+        pendingRetries.set(retryId, {
+          threadId: args.threadId,
+          userId: args.userId,
+          messageId: args.messageId,
+          content: normalizedContent.content,
+        })
+        const reauthUrl = getReauthUrl()
+        const card = buildReauthCardPayload(retryId, reauthUrl)
+        await sendThreadMessage(args.threadId, card.content, card.components)
+        return
       }
       if (dispatch.kind === 'error') {
         dispatchNote = `\n\n_Action failed: ${dispatch.message}_`

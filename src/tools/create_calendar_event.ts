@@ -1,4 +1,4 @@
-import { createEvent, listCalendars } from '../calendar/client'
+import { createEvent, listCalendars, type CalendarListEntry } from '../calendar/client'
 import { getValidGmailAccessToken } from '../gmail/tokens'
 import { getSetting } from '../db/settings'
 import { getDefaultCalendarId, PRIMARY_CALENDAR_ID } from '../calendar/defaults'
@@ -21,7 +21,8 @@ export async function createCalendarEvent(
 ): Promise<string> {
   validateArgs(args)
   const accessToken = await getValidGmailAccessToken(ctx.gmailUserId)
-  const calendarId = requestedCalendarId(args) || getDefaultCalendarId()
+  const rawCalendarId = requestedCalendarId(args) || getDefaultCalendarId()
+  const calendarId = await resolveCalendarId(accessToken, rawCalendarId)
   const timezone = await resolveCalendarTimezone(accessToken, calendarId, getSetting('timezone', 'UTC'))
 
   const event = await createEvent(accessToken, {
@@ -63,6 +64,24 @@ function formatEventDate(iso: string): string {
   } catch {
     return iso
   }
+}
+
+// The LLM sometimes truncates group calendar IDs at the '@' sign (e.g. passes
+// "abc123" instead of "abc123@group.calendar.google.com"). Match against the
+// real calendar list so the full ID is always used for the API call.
+async function resolveCalendarId(accessToken: string, calendarId: string): Promise<string> {
+  if (calendarId === PRIMARY_CALENDAR_ID) return calendarId
+  let calendars: CalendarListEntry[]
+  try {
+    calendars = await listCalendars(accessToken)
+  } catch {
+    return calendarId
+  }
+  const exact = calendars.find(c => c.id === calendarId)
+  if (exact) return exact.id
+  const partial = calendars.find(c => c.id.startsWith(calendarId + '@'))
+  if (partial) return partial.id
+  return calendarId
 }
 
 function requestedCalendarId(args: CreateEventArgs): string | undefined {

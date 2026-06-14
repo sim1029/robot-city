@@ -1,6 +1,18 @@
 const GOOGLE_AUTH = 'https://accounts.google.com/o/oauth2/v2/auth'
 const GOOGLE_TOKEN = 'https://oauth2.googleapis.com/token'
 
+export class GoogleAuthExpiredError extends Error {
+  constructor() {
+    super('Google authentication has expired. Please re-authenticate.')
+    this.name = 'GoogleAuthExpiredError'
+  }
+}
+
+export function getReauthUrl(): string {
+  const redirectUri = process.env.GOOGLE_REDIRECT_URI ?? ''
+  return redirectUri.replace(/\/callback$/, '')
+}
+
 const GMAIL_SCOPES = [
   'https://www.googleapis.com/auth/gmail.modify',
   'https://www.googleapis.com/auth/gmail.send',
@@ -73,7 +85,11 @@ export async function refreshGmailAccessToken(refreshToken: string): Promise<Gma
     headers: { 'content-type': 'application/x-www-form-urlencoded' },
     body: body.toString(),
   })
-  if (!res.ok) throw new Error(`Google token refresh failed ${res.status}: ${await res.text()}`)
+  if (!res.ok) {
+    const text = await res.text()
+    if (text.includes('invalid_grant')) throw new GoogleAuthExpiredError()
+    throw new Error(`Google token refresh failed ${res.status}: ${text}`)
+  }
   return res.json() as Promise<GmailRefreshResult>
 }
 

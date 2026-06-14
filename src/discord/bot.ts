@@ -1,5 +1,5 @@
 import { Client, Events, GatewayIntentBits, ChannelType, MessageFlags } from 'discord.js'
-import { handleApprovalInteraction, handleEditModalSubmit, handleThreadArchive, handleThreadMessage } from './handlers'
+import { consumeReauthRetry, handleApprovalInteraction, handleEditModalSubmit, handleThreadArchive, handleThreadMessage } from './handlers'
 import { getResolvedForumId, resolveForumChannel } from './forum'
 import { handleSlashCommand, registerGuildSlashCommands } from './slash_commands'
 
@@ -97,6 +97,27 @@ export async function startBot(): Promise<BotHandle> {
       return
     }
     if (interaction.isButton()) {
+      // Handle Google re-auth retry
+      if (interaction.customId.startsWith('reauth:')) {
+        const parts = interaction.customId.split(':')
+        if (parts.length === 3 && parts[2] === 'retry') {
+          const retryId = parts[1]
+          const retry = consumeReauthRetry(retryId)
+          if (!retry) {
+            await interaction.reply({ content: 'Retry context expired — please send your message again.', ephemeral: true })
+            return
+          }
+          await interaction.deferUpdate()
+          await handleThreadMessage({
+            threadId: retry.threadId,
+            userId: retry.userId,
+            messageId: retry.messageId,
+            content: retry.content,
+          }).catch(err => console.error('reauth retry error', err))
+          return
+        }
+      }
+
       try {
         const outcome = await handleApprovalInteraction({
           customId: interaction.customId,
