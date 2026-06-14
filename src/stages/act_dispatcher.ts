@@ -4,6 +4,7 @@ import { requestSendEmail } from '../tools/send_email'
 import { readCalendar } from '../tools/read_calendar'
 import { sendApprovalCardForApproval } from '../discord/dm'
 import { getValidGmailAccessToken } from '../gmail/tokens'
+import { GoogleAuthExpiredError } from '../gmail/oauth'
 import { and, desc, eq, gt } from 'drizzle-orm'
 import { db } from '../db/client'
 import { events } from '../db/tables'
@@ -12,6 +13,7 @@ import { insertEvent } from '../db/events'
 export type DispatchResult =
   | { kind: 'executed'; toolName: string; output: string }
   | { kind: 'approval_pending'; approvalId: string }
+  | { kind: 'auth_expired' }
   | { kind: 'error'; message: string }
 
 export async function dispatchToolCall(
@@ -111,6 +113,7 @@ export async function dispatchToolCall(
   } catch (err) {
     console.error('[tool] dispatch error for %s:', toolName, err)
     logToolCall(ctx.sessionId, toolName, args, false)
+    if (err instanceof GoogleAuthExpiredError) return { kind: 'auth_expired' }
     return { kind: 'error', message: err instanceof Error ? err.message : String(err) }
   }
 }

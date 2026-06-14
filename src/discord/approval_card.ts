@@ -100,6 +100,20 @@ export function buildEditModal(a: Approval): DiscordModal {
   }
 }
 
+export function buildReauthCardPayload(retryId: string, reauthUrl: string): DiscordMessagePayload {
+  return {
+    content: `**Google authentication has expired.**\n[Re-authenticate with Google](${reauthUrl})\n\nOnce signed in, press **Retry** to run your request again.`,
+    components: [
+      {
+        type: 1,
+        components: [
+          { type: 2, style: BUTTON_STYLE.PRIMARY, label: 'Retry', custom_id: `reauth:${retryId}:retry` },
+        ],
+      },
+    ],
+  }
+}
+
 export interface ParsedCustomId {
   id: string
   decision: 'approve' | 'reject' | 'edit'

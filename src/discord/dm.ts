@@ -1,6 +1,6 @@
 import { getApproval, setApprovalDiscordMessage } from '../approvals/state'
 import { buildApprovalCardPayload } from './approval_card'
-import type { DiscordMessagePayload } from './approval_card'
+import type { DiscordActionRow, DiscordMessagePayload } from './approval_card'
 
 const DISCORD_API = 'https://discord.com/api/v10'
 
@@ -48,11 +48,13 @@ export async function editChannelMessage(channelId: string, messageId: string, p
   if (!res.ok) throw new Error(`Discord edit message ${res.status}: ${await res.text()}`)
 }
 
-export async function sendThreadMessage(threadId: string, content: string): Promise<string> {
+export async function sendThreadMessage(threadId: string, content: string, components?: DiscordActionRow[]): Promise<string> {
+  const body: Record<string, unknown> = { content }
+  if (components?.length) body.components = components
   const res = await fetch(`${DISCORD_API}/channels/${threadId}/messages`, {
     method: 'POST',
     headers: authHeaders(),
-    body: JSON.stringify({ content }),
+    body: JSON.stringify(body),
   })
   if (!res.ok) throw new Error(`Discord thread message ${res.status}: ${await res.text()}`)
   const msg = await res.json() as { id: string }
