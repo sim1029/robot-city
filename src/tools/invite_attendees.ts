@@ -1,8 +1,10 @@
 import { patchAttendees } from '../calendar/client'
 import { getValidGmailAccessToken } from '../gmail/tokens'
 import { createApproval, registerApprovalHandler, type Approval } from '../approvals/state'
+import { and, desc, eq } from 'drizzle-orm'
 import { insertEvent } from '../db/events'
 import { db } from '../db/client'
+import { events } from '../db/tables'
 
 export interface InviteAttendeesArgs {
   eventId: string
@@ -57,13 +59,12 @@ function validateArgs(args: InviteAttendeesArgs): void {
 function findCreatedEventCalendarId(eventId: string, sessionId?: string | null): string | undefined {
   if (!sessionId) return undefined
 
-  const rows = db.query(
-    `SELECT payload, output
-     FROM events
-     WHERE session_id = ? AND type = 'tool:create_calendar_event'
-     ORDER BY id DESC
-     LIMIT 25`
-  ).all(sessionId) as Array<{ payload: string | null; output: string | null }>
+  const rows = db.select({ payload: events.payload, output: events.output })
+    .from(events)
+    .where(and(eq(events.sessionId, sessionId), eq(events.type, 'tool:create_calendar_event')))
+    .orderBy(desc(events.id))
+    .limit(25)
+    .all()
 
   for (const row of rows) {
     const output = parseJson(row.output)

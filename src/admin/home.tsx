@@ -1,5 +1,7 @@
 import { Hono } from 'hono'
+import { count, desc, gte, sql } from 'drizzle-orm'
 import { db } from '../db/client'
+import { events } from '../db/tables'
 import { Layout } from './components/Layout'
 import { renderPage, renderFragment } from './render'
 
@@ -214,10 +216,24 @@ function HomePage({ csrfToken, day, week, rows, nextOffset }: HomePageProps) {
 }
 
 function fetchEventPage(offset: number): { rows: EventRow[]; nextOffset: number | null } {
-  const fetched = db.query(
-    `SELECT id, session_id, type, model, input_tokens, output_tokens, cost_usd, latency_ms, payload, output, created_at
-     FROM events ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`
-  ).all(PAGE_SIZE + 1, offset) as EventRow[]
+  const fetched: EventRow[] = db.select({
+    id: events.id,
+    session_id: events.sessionId,
+    type: events.type,
+    model: events.model,
+    input_tokens: events.inputTokens,
+    output_tokens: events.outputTokens,
+    cost_usd: events.costUsd,
+    latency_ms: events.latencyMs,
+    payload: events.payload,
+    output: events.output,
+    created_at: events.createdAt,
+  })
+    .from(events)
+    .orderBy(desc(events.createdAt), desc(events.id))
+    .limit(PAGE_SIZE + 1)
+    .offset(offset)
+    .all()
   const rows = fetched.slice(0, PAGE_SIZE)
   const nextOffset = fetched.length > PAGE_SIZE ? offset + PAGE_SIZE : null
   return { rows, nextOffset }
@@ -231,21 +247,15 @@ homeRoutes.get('/', (c) => {
   const dayAgo = Math.floor(Date.now() / 1000) - 86400
   const weekAgo = Math.floor(Date.now() / 1000) - 7 * 86400
 
-  const day = db.query(
-    `SELECT COALESCE(SUM(cost_usd),0) AS total_cost,
-            COALESCE(SUM(input_tokens),0) AS total_input,
-            COALESCE(SUM(output_tokens),0) AS total_output,
-            COUNT(*) AS event_count
-     FROM events WHERE created_at >= ?`
-  ).get(dayAgo) as CostTotals
+  const costTotalsSince = (since: number): CostTotals => db.select({
+    total_cost: sql<number>`COALESCE(SUM(${events.costUsd}), 0)`,
+    total_input: sql<number>`COALESCE(SUM(${events.inputTokens}), 0)`,
+    total_output: sql<number>`COALESCE(SUM(${events.outputTokens}), 0)`,
+    event_count: count(),
+  }).from(events).where(gte(events.createdAt, since)).get()!
 
-  const week = db.query(
-    `SELECT COALESCE(SUM(cost_usd),0) AS total_cost,
-            COALESCE(SUM(input_tokens),0) AS total_input,
-            COALESCE(SUM(output_tokens),0) AS total_output,
-            COUNT(*) AS event_count
-     FROM events WHERE created_at >= ?`
-  ).get(weekAgo) as CostTotals
+  const day = costTotalsSince(dayAgo)
+  const week = costTotalsSince(weekAgo)
 
   const { rows, nextOffset } = fetchEventPage(0)
 

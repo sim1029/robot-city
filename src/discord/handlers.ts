@@ -15,6 +15,7 @@ import { getSetting } from '../db/settings'
 import { isPaused } from '../system/pause'
 import { computeSessionStats, ensureSession, getSessionCost, markSessionClosed } from '../db/sessions'
 import { db } from '../db/client'
+import { gmailTokens } from '../db/tables'
 import { insertEvent } from '../db/events'
 import type { ContentBlock, ToolDefinition } from '../providers/types'
 import { formatCalendarList, listWritableCalendarsForUser } from '../calendar/defaults'
@@ -236,10 +237,8 @@ export async function handleThreadMessage(args: {
     return
   }
 
-  const gmailRow = db
-    .query('SELECT user_id FROM gmail_tokens LIMIT 1')
-    .get() as { user_id: string } | null
-  const gmailUserId = gmailRow?.user_id ?? ''
+  const gmailRow = db.select({ userId: gmailTokens.userId }).from(gmailTokens).limit(1).get()
+  const gmailUserId = gmailRow?.userId ?? ''
 
   const history = await fetchThreadHistory(args.threadId, args.messageId).catch(() => [])
 

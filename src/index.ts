@@ -2,7 +2,9 @@ import { Hono } from 'hono'
 import { serveStatic } from 'hono/bun'
 import { snapshotDb } from './db/snapshot'
 import { migrate } from './db/schema'
+import { desc, eq, sql } from 'drizzle-orm'
 import { db } from './db/client'
+import { discordTokens, events, gmailTokens } from './db/tables'
 import { getKey, setKey } from './vault'
 import { runStage, runPipeline, buildFooter } from './stages/runner'
 import { getOAuthUrl, exchangeCode, getCurrentUser } from './discord/oauth'
@@ -85,16 +87,24 @@ app.get('/auth/discord/callback', async (c) => {
     const user = await getCurrentUser(tokens.access_token)
     const guildId = tokens.guild?.id ?? null
 
-    db.run(
-      `INSERT INTO discord_tokens (user_id, access_token, refresh_token, expires_at, guild_id)
-       VALUES (?, ?, ?, ?, ?)
-       ON CONFLICT(user_id) DO UPDATE SET
-         access_token = excluded.access_token,
-         refresh_token = excluded.refresh_token,
-         expires_at = excluded.expires_at,
-         guild_id = excluded.guild_id`,
-      [user.id, tokens.access_token, tokens.refresh_token, Date.now() + tokens.expires_in * 1000, guildId]
-    )
+    db.insert(discordTokens)
+      .values({
+        userId: user.id,
+        accessToken: tokens.access_token,
+        refreshToken: tokens.refresh_token,
+        expiresAt: Date.now() + tokens.expires_in * 1000,
+        guildId,
+      })
+      .onConflictDoUpdate({
+        target: discordTokens.userId,
+        set: {
+          accessToken: sql`excluded.access_token`,
+          refreshToken: sql`excluded.refresh_token`,
+          expiresAt: sql`excluded.expires_at`,
+          guildId: sql`excluded.guild_id`,
+        },
+      })
+      .run()
 
     return c.json({ ok: true, user: { id: user.id, username: user.username }, guild_id: guildId })
   } catch (err) {
@@ -171,8 +181,8 @@ app.put('/settings/:key', async (c) => {
 // ── Cron brief (manual trigger for testing) ───────────────────────────────────
 
 app.post('/cron/brief', async (c) => {
-  const gmailRow = db.query('SELECT user_id FROM gmail_tokens LIMIT 1').get() as { user_id: string } | null
-  const discordRow = db.query('SELECT user_id FROM discord_tokens LIMIT 1').get() as { user_id: string } | null
+  const gmailRow = db.select({ userId: gmailTokens.userId }).from(gmailTokens).limit(1).get()
+  const discordRow = db.select({ userId: discordTokens.userId }).from(discordTokens).limit(1).get()
 
   if (!gmailRow || !discordRow) {
     return c.json({ error: 'Gmail and Discord accounts must be connected first' }, 400)
@@ -183,7 +193,7 @@ app.post('/cron/brief', async (c) => {
   const label = (['morning', 'midday', 'evening'].includes(labelArg) ? labelArg : 'morning') as 'morning' | 'midday' | 'evening'
 
   try {
-    await generateBrief({ gmailUserId: gmailRow.user_id, discordUserId: discordRow.user_id, label })
+    await generateBrief({ gmailUserId: gmailRow.userId, discordUserId: discordRow.userId, label })
     return c.json({ ok: true, label })
   } catch (err) {
     return c.json({ error: String(err) }, 500)
@@ -254,29 +264,46 @@ app.post('/stages/pipeline', async (c) => {
 app.get('/events', (c) => {
   const limit = Math.min(Number(c.req.query('limit') ?? 50), 500)
   const sessionId = c.req.query('session_id')
-  const events = sessionId
-    ? db.query('SELECT * FROM events WHERE session_id = ? ORDER BY created_at DESC LIMIT ?').all(sessionId, limit)
-    : db.query('SELECT * FROM events ORDER BY created_at DESC LIMIT ?').all(limit)
-  return c.json({ events })
+  // snake_case aliases keep the JSON response shape identical to the pre-ORM API.
+  const eventColumns = {
+    id: events.id,
+    session_id: events.sessionId,
+    type: events.type,
+    model: events.model,
+    input_tokens: events.inputTokens,
+    output_tokens: events.outputTokens,
+    cost_usd: events.costUsd,
+    latency_ms: events.latencyMs,
+    payload: events.payload,
+    output: events.output,
+    created_at: events.createdAt,
+  }
+  const rows = db.select(eventColumns)
+    .from(events)
+    .where(sessionId ? eq(events.sessionId, sessionId) : undefined)
+    .orderBy(desc(events.createdAt))
+    .limit(limit)
+    .all()
+  return c.json({ events: rows })
 })
 
 // ── Server ────────────────────────────────────────────────────────────────────
 
 // Restore tool handlers for any Gmail account already onboarded
-for (const row of db.query('SELECT user_id FROM gmail_tokens').all() as Array<{ user_id: string }>) {
-  registerSendEmailTool(row.user_id)
-  registerInviteAttendeesTool(row.user_id)
+for (const row of db.select({ userId: gmailTokens.userId }).from(gmailTokens).all()) {
+  registerSendEmailTool(row.userId)
+  registerInviteAttendeesTool(row.userId)
 }
 
 if (process.env.DISCORD_BOT_TOKEN) {
   startBot()
     .then(() => {
       // Start daily brief scheduler once bot is live
-      const gmailRow = db.query('SELECT user_id FROM gmail_tokens LIMIT 1').get() as { user_id: string } | null
-      const discordRow = db.query('SELECT user_id FROM discord_tokens LIMIT 1').get() as { user_id: string } | null
+      const gmailRow = db.select({ userId: gmailTokens.userId }).from(gmailTokens).limit(1).get()
+      const discordRow = db.select({ userId: discordTokens.userId }).from(discordTokens).limit(1).get()
       if (gmailRow && discordRow) {
-        startScheduler({ gmailUserId: gmailRow.user_id, discordUserId: discordRow.user_id })
-        console.log(`[cron] Scheduler started for ${gmailRow.user_id} (timezone: ${getSetting('timezone', 'UTC')})`)
+        startScheduler({ gmailUserId: gmailRow.userId, discordUserId: discordRow.userId })
+        console.log(`[cron] Scheduler started for ${gmailRow.userId} (timezone: ${getSetting('timezone', 'UTC')})`)
       }
     })
     .catch((err) => console.error('Discord bot failed to start:', err))

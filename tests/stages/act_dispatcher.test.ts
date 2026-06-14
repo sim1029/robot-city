@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
-import { db } from '../../src/db/client'
+import { sqlite as db } from '../../src/db/client'
 import { migrate } from '../../src/db/schema'
 import { saveGmailTokens } from '../../src/gmail/tokens'
 import { dispatchToolCall } from '../../src/stages/act_dispatcher'

@@ -1,4 +1,6 @@
+import { eq, lt } from 'drizzle-orm'
 import { db } from '../db/client'
+import { adminSessions } from '../db/tables'
 
 const SESSION_TTL_SEC = 30 * 24 * 60 * 60
 
@@ -22,32 +24,37 @@ export function createSession(discordUserId: string): { id: string; csrfToken: s
   const csrfToken = randomToken()
   const now = Math.floor(Date.now() / 1000)
   const expiresAt = now + SESSION_TTL_SEC
-  db.run(
-    `INSERT INTO admin_sessions (id, discord_user_id, csrf_token, created_at, expires_at, last_seen_at)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-    [id, discordUserId, csrfToken, now, expiresAt, now]
-  )
+  db.insert(adminSessions)
+    .values({ id, discordUserId, csrfToken, createdAt: now, expiresAt, lastSeenAt: now })
+    .run()
   return { id, csrfToken, maxAgeSec: SESSION_TTL_SEC }
 }
 
 export function getSession(id: string): AdminSession | null {
-  const row = db.query('SELECT * FROM admin_sessions WHERE id = ?').get(id) as AdminSession | null
+  const row = db.select().from(adminSessions).where(eq(adminSessions.id, id)).get()
   if (!row) return null
   const now = Math.floor(Date.now() / 1000)
-  if (row.expires_at < now) {
-    db.run('DELETE FROM admin_sessions WHERE id = ?', [id])
+  if (row.expiresAt < now) {
+    db.delete(adminSessions).where(eq(adminSessions.id, id)).run()
     return null
   }
-  db.run('UPDATE admin_sessions SET last_seen_at = ? WHERE id = ?', [now, id])
-  return row
+  db.update(adminSessions).set({ lastSeenAt: now }).where(eq(adminSessions.id, id)).run()
+  return {
+    id: row.id,
+    discord_user_id: row.discordUserId,
+    csrf_token: row.csrfToken,
+    created_at: row.createdAt,
+    expires_at: row.expiresAt,
+    last_seen_at: now,
+  }
 }
 
 export function deleteSession(id: string): void {
-  db.run('DELETE FROM admin_sessions WHERE id = ?', [id])
+  db.delete(adminSessions).where(eq(adminSessions.id, id)).run()
 }
 
 export function cleanupExpiredSessions(): number {
   const now = Math.floor(Date.now() / 1000)
-  const result = db.run('DELETE FROM admin_sessions WHERE expires_at < ?', [now])
-  return result.changes
+  const deleted = db.delete(adminSessions).where(lt(adminSessions.expiresAt, now)).returning({ id: adminSessions.id }).all()
+  return deleted.length
 }

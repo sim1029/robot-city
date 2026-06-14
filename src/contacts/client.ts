@@ -1,4 +1,6 @@
-import { db } from '../db/client'
+import { count, eq, like, or, sql } from 'drizzle-orm'
+import { db, sqlite } from '../db/client'
+import { contacts } from '../db/tables'
 
 export type ContactSource = 'email' | 'google_contacts' | 'manual'
 
@@ -13,27 +15,43 @@ export interface Contact {
   updated_at: number
 }
 
+function toContact(row: typeof contacts.$inferSelect): Contact {
+  return {
+    id: row.id,
+    email: row.email,
+    name: row.name,
+    aliases: row.aliases,
+    source: row.source as ContactSource,
+    last_seen_at: row.lastSeenAt,
+    created_at: row.createdAt,
+    updated_at: row.updatedAt,
+  }
+}
+
 export function upsertContact(email: string, name: string, source: ContactSource = 'email'): void {
   const normalizedEmail = email.trim().toLowerCase()
   if (!normalizedEmail || !normalizedEmail.includes('@')) return
 
-  db.run(`
-    INSERT INTO contacts (email, name, source, last_seen_at)
-    VALUES (?, ?, ?, unixepoch())
-    ON CONFLICT(email) DO UPDATE SET
-      name = CASE
-        WHEN excluded.name != '' AND contacts.source != 'manual'
-        THEN excluded.name
-        ELSE contacts.name
-      END,
-      source = CASE
-        WHEN contacts.source = 'email' AND excluded.source = 'google_contacts'
-        THEN 'google_contacts'
-        ELSE contacts.source
-      END,
-      last_seen_at = unixepoch(),
-      updated_at = unixepoch()
-  `, [normalizedEmail, name.trim(), source])
+  db.insert(contacts)
+    .values({ email: normalizedEmail, name: name.trim(), source, lastSeenAt: sql`unixepoch()` })
+    .onConflictDoUpdate({
+      target: contacts.email,
+      set: {
+        name: sql`CASE
+          WHEN excluded.name != '' AND ${contacts.source} != 'manual'
+          THEN excluded.name
+          ELSE ${contacts.name}
+        END`,
+        source: sql`CASE
+          WHEN ${contacts.source} = 'email' AND excluded.source = 'google_contacts'
+          THEN 'google_contacts'
+          ELSE ${contacts.source}
+        END`,
+        lastSeenAt: sql`unixepoch()`,
+        updatedAt: sql`unixepoch()`,
+      },
+    })
+    .run()
 }
 
 export function lookupContacts(query: string, limit = 5): Contact[] {
@@ -49,7 +67,8 @@ export function lookupContacts(query: string, limit = 5): Contact[] {
   const ftsQuery = tokens.map(t => `"${t}"*`).join(' OR ')
 
   try {
-    return db.query(`
+    // FTS5 MATCH + rank are virtual-table features Drizzle can't model — raw SQL.
+    return sqlite.query(`
       SELECT c.id, c.email, c.name, c.aliases, c.source, c.last_seen_at, c.created_at, c.updated_at
       FROM contacts c
       JOIN contacts_fts ON contacts_fts.rowid = c.id
@@ -59,26 +78,26 @@ export function lookupContacts(query: string, limit = 5): Contact[] {
     `).all(ftsQuery, limit) as Contact[]
   } catch {
     // FTS syntax error: fall back to LIKE search
-    const like = `%${query.replace(/[%_]/g, '\\$&')}%`
-    return db.query(`
-      SELECT id, email, name, aliases, source, last_seen_at, created_at, updated_at
-      FROM contacts
-      WHERE name LIKE ? OR email LIKE ? OR aliases LIKE ?
-      ORDER BY last_seen_at DESC NULLS LAST
-      LIMIT ?
-    `).all(like, like, like, limit) as Contact[]
+    const pattern = `%${query.replace(/[%_]/g, '\\$&')}%`
+    return db.select()
+      .from(contacts)
+      .where(or(like(contacts.name, pattern), like(contacts.email, pattern), like(contacts.aliases, pattern)))
+      .orderBy(sql`${contacts.lastSeenAt} DESC NULLS LAST`)
+      .limit(limit)
+      .all()
+      .map(toContact)
   }
 }
 
 export function listContacts(offset = 0, limit = 50): { contacts: Contact[]; total: number } {
-  const { n } = db.query('SELECT COUNT(*) AS n FROM contacts').get() as { n: number }
-  const contacts = db.query(`
-    SELECT id, email, name, aliases, source, last_seen_at, created_at, updated_at
-    FROM contacts
-    ORDER BY last_seen_at DESC NULLS LAST, updated_at DESC
-    LIMIT ? OFFSET ?
-  `).all(limit, offset) as Contact[]
-  return { contacts, total: n }
+  const { n } = db.select({ n: count() }).from(contacts).get()!
+  const rows = db.select()
+    .from(contacts)
+    .orderBy(sql`${contacts.lastSeenAt} DESC NULLS LAST`, sql`${contacts.updatedAt} DESC`)
+    .limit(limit)
+    .offset(offset)
+    .all()
+  return { contacts: rows.map(toContact), total: n }
 }
 
 export function searchContacts(query: string, offset = 0, limit = 50): { contacts: Contact[]; total: number } {
@@ -94,7 +113,8 @@ export function searchContacts(query: string, offset = 0, limit = 50): { contact
   const ftsQuery = tokens.map(t => `"${t}"*`).join(' OR ')
 
   try {
-    const rows = db.query(`
+    // FTS5 MATCH + rank are virtual-table features Drizzle can't model — raw SQL.
+    const rows = sqlite.query(`
       SELECT c.id, c.email, c.name, c.aliases, c.source, c.last_seen_at, c.created_at, c.updated_at
       FROM contacts c
       JOIN contacts_fts ON contacts_fts.rowid = c.id
@@ -104,7 +124,7 @@ export function searchContacts(query: string, offset = 0, limit = 50): { contact
     `).all(ftsQuery, limit, offset) as Contact[]
 
     // Count separately for pagination
-    const countRow = db.query(`
+    const countRow = sqlite.query(`
       SELECT COUNT(*) AS n
       FROM contacts c
       JOIN contacts_fts ON contacts_fts.rowid = c.id
@@ -113,29 +133,27 @@ export function searchContacts(query: string, offset = 0, limit = 50): { contact
 
     return { contacts: rows, total: countRow.n }
   } catch {
-    const like = `%${query.replace(/[%_]/g, '\\$&')}%`
-    const rows = db.query(`
-      SELECT id, email, name, aliases, source, last_seen_at, created_at, updated_at
-      FROM contacts
-      WHERE name LIKE ? OR email LIKE ? OR aliases LIKE ?
-      ORDER BY last_seen_at DESC NULLS LAST
-      LIMIT ? OFFSET ?
-    `).all(like, like, like, limit, offset) as Contact[]
-    const { n } = db.query(
-      `SELECT COUNT(*) AS n FROM contacts WHERE name LIKE ? OR email LIKE ? OR aliases LIKE ?`
-    ).get(like, like, like) as { n: number }
-    return { contacts: rows, total: n }
+    const pattern = `%${query.replace(/[%_]/g, '\\$&')}%`
+    const matches = or(like(contacts.name, pattern), like(contacts.email, pattern), like(contacts.aliases, pattern))
+    const rows = db.select()
+      .from(contacts)
+      .where(matches)
+      .orderBy(sql`${contacts.lastSeenAt} DESC NULLS LAST`)
+      .limit(limit)
+      .offset(offset)
+      .all()
+    const { n } = db.select({ n: count() }).from(contacts).where(matches).get()!
+    return { contacts: rows.map(toContact), total: n }
   }
 }
 
 export function getContact(id: number): Contact | null {
-  return db.query(
-    'SELECT id, email, name, aliases, source, last_seen_at, created_at, updated_at FROM contacts WHERE id = ?'
-  ).get(id) as Contact | null
+  const row = db.select().from(contacts).where(eq(contacts.id, id)).get()
+  return row ? toContact(row) : null
 }
 
 export function deleteContact(id: number): void {
-  db.run('DELETE FROM contacts WHERE id = ?', [id])
+  db.delete(contacts).where(eq(contacts.id, id)).run()
 }
 
 export function addAlias(id: number, alias: string): void {
@@ -145,5 +163,5 @@ export function addAlias(id: number, alias: string): void {
   const trimmed = alias.trim().toLowerCase()
   if (!trimmed || existing.includes(trimmed)) return
   const updated = [...existing, trimmed].join(',')
-  db.run('UPDATE contacts SET aliases = ?, updated_at = unixepoch() WHERE id = ?', [updated, id])
+  db.update(contacts).set({ aliases: updated, updatedAt: sql`unixepoch()` }).where(eq(contacts.id, id)).run()
 }

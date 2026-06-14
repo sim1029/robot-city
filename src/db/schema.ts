@@ -1,8 +1,13 @@
-import { db } from './client'
+import { eq, sql } from 'drizzle-orm'
+import { db, sqlite } from './client'
+import { userSettings } from './tables'
 import { validateTimezone } from '../timezones'
 
+// DDL is deliberately raw SQL against the bun:sqlite handle: it must stay
+// idempotent and runnable before the Drizzle layer is involved. The Drizzle
+// table definitions in tables.ts mirror this schema — keep both in sync.
 export function migrate() {
-  db.run(`
+  sqlite.run(`
     CREATE TABLE IF NOT EXISTS sessions (
       id TEXT PRIMARY KEY,
       discord_thread_id TEXT UNIQUE,
@@ -12,7 +17,7 @@ export function migrate() {
     )
   `)
 
-  db.run(`
+  sqlite.run(`
     CREATE TABLE IF NOT EXISTS events (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       session_id TEXT,
@@ -28,7 +33,7 @@ export function migrate() {
     )
   `)
 
-  db.run(`
+  sqlite.run(`
     CREATE TABLE IF NOT EXISTS vault_keys (
       provider TEXT PRIMARY KEY,
       ciphertext TEXT NOT NULL,
@@ -38,7 +43,7 @@ export function migrate() {
     )
   `)
 
-  db.run(`
+  sqlite.run(`
     CREATE TABLE IF NOT EXISTS discord_tokens (
       user_id TEXT PRIMARY KEY,
       access_token TEXT NOT NULL,
@@ -48,7 +53,7 @@ export function migrate() {
     )
   `)
 
-  db.run(`
+  sqlite.run(`
     CREATE TABLE IF NOT EXISTS gmail_tokens (
       user_id TEXT PRIMARY KEY,
       access_token TEXT NOT NULL,
@@ -60,7 +65,7 @@ export function migrate() {
     )
   `)
 
-  db.run(`
+  sqlite.run(`
     CREATE TABLE IF NOT EXISTS pending_approvals (
       id TEXT PRIMARY KEY,
       action TEXT NOT NULL,
@@ -77,9 +82,9 @@ export function migrate() {
   `)
 
   // Additive migration — safe to run against existing DB
-  try { db.run('ALTER TABLE events ADD COLUMN output TEXT') } catch { /* already exists */ }
+  try { sqlite.run('ALTER TABLE events ADD COLUMN output TEXT') } catch { /* already exists */ }
 
-  db.run(`
+  sqlite.run(`
     CREATE TABLE IF NOT EXISTS user_settings (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL,
@@ -87,7 +92,7 @@ export function migrate() {
     )
   `)
 
-  db.run(`
+  sqlite.run(`
     CREATE TABLE IF NOT EXISTS admin_sessions (
       id TEXT PRIMARY KEY,
       discord_user_id TEXT NOT NULL,
@@ -97,9 +102,9 @@ export function migrate() {
       last_seen_at INTEGER NOT NULL DEFAULT (unixepoch())
     )
   `)
-  db.run('CREATE INDEX IF NOT EXISTS idx_admin_sessions_expires ON admin_sessions(expires_at)')
+  sqlite.run('CREATE INDEX IF NOT EXISTS idx_admin_sessions_expires ON admin_sessions(expires_at)')
 
-  db.run(`
+  sqlite.run(`
     CREATE TABLE IF NOT EXISTS contacts (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       email TEXT UNIQUE NOT NULL,
@@ -112,7 +117,7 @@ export function migrate() {
     )
   `)
 
-  db.run(`
+  sqlite.run(`
     CREATE VIRTUAL TABLE IF NOT EXISTS contacts_fts USING fts5(
       email, name, aliases,
       content=contacts,
@@ -120,7 +125,7 @@ export function migrate() {
     )
   `)
 
-  db.run(`
+  sqlite.run(`
     CREATE TRIGGER IF NOT EXISTS contacts_fts_insert
     AFTER INSERT ON contacts BEGIN
       INSERT INTO contacts_fts(rowid, email, name, aliases)
@@ -128,7 +133,7 @@ export function migrate() {
     END
   `)
 
-  db.run(`
+  sqlite.run(`
     CREATE TRIGGER IF NOT EXISTS contacts_fts_update
     AFTER UPDATE ON contacts BEGIN
       INSERT INTO contacts_fts(contacts_fts, rowid, email, name, aliases)
@@ -138,7 +143,7 @@ export function migrate() {
     END
   `)
 
-  db.run(`
+  sqlite.run(`
     CREATE TRIGGER IF NOT EXISTS contacts_fts_delete
     AFTER DELETE ON contacts BEGIN
       INSERT INTO contacts_fts(contacts_fts, rowid, email, name, aliases)
@@ -159,17 +164,20 @@ export function migrate() {
     db_backup_hour: '3',
   }
   for (const [key, value] of Object.entries(settingDefaults)) {
-    db.run(`INSERT OR IGNORE INTO user_settings (key, value) VALUES (?, ?)`, [key, value])
+    db.insert(userSettings).values({ key, value }).onConflictDoNothing().run()
   }
   normalizeStoredTimezone()
 }
 
 function normalizeStoredTimezone() {
-  const row = db.query(`SELECT value FROM user_settings WHERE key = 'timezone'`).get() as { value: string } | null
+  const row = db.select({ value: userSettings.value }).from(userSettings).where(eq(userSettings.key, 'timezone')).get()
   if (!row) return
 
   const timezone = validateTimezone(row.value)
   if (timezone.ok && timezone.value !== row.value) {
-    db.run(`UPDATE user_settings SET value = ?, updated_at = unixepoch() WHERE key = 'timezone'`, [timezone.value])
+    db.update(userSettings)
+      .set({ value: timezone.value, updatedAt: sql`unixepoch()` })
+      .where(eq(userSettings.key, 'timezone'))
+      .run()
   }
 }

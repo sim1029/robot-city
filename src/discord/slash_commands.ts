@@ -8,6 +8,7 @@ import {
   setDefaultCalendarId,
 } from '../calendar/defaults'
 import { db } from '../db/client'
+import { gmailTokens } from '../db/tables'
 
 const DISCORD_API = 'https://discord.com/api/v10'
 
@@ -160,6 +161,6 @@ async function handleCalendarDefaultCommand(subcommand: string, calendarQuery: s
 }
 
 function getConnectedGmailUserId(): string | null {
-  const row = db.query('SELECT user_id FROM gmail_tokens LIMIT 1').get() as { user_id: string } | null
-  return row?.user_id ?? null
+  const row = db.select({ userId: gmailTokens.userId }).from(gmailTokens).limit(1).get()
+  return row?.userId ?? null
 }

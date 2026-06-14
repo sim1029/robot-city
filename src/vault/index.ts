@@ -1,4 +1,6 @@
+import { eq, sql } from 'drizzle-orm'
 import { db } from '../db/client'
+import { vaultKeys } from '../db/tables'
 
 const ENV_KEY_MAP: Record<string, string> = {
   anthropic: 'ANTHROPIC_API_KEY',
@@ -13,9 +15,10 @@ interface VaultRow {
 }
 
 export async function getKey(provider: string): Promise<string> {
-  const row = db.query(
-    'SELECT ciphertext, iv, salt FROM vault_keys WHERE provider = ?'
-  ).get(provider) as VaultRow | null
+  const row = db.select({ ciphertext: vaultKeys.ciphertext, iv: vaultKeys.iv, salt: vaultKeys.salt })
+    .from(vaultKeys)
+    .where(eq(vaultKeys.provider, provider))
+    .get()
 
   if (row) return decrypt(row)
 
@@ -28,16 +31,18 @@ export async function getKey(provider: string): Promise<string> {
 
 export async function setKey(provider: string, plaintext: string): Promise<void> {
   const { ciphertext, iv, salt } = await encrypt(plaintext)
-  db.run(
-    `INSERT INTO vault_keys (provider, ciphertext, iv, salt, updated_at)
-     VALUES (?, ?, ?, ?, unixepoch())
-     ON CONFLICT(provider) DO UPDATE SET
-       ciphertext = excluded.ciphertext,
-       iv = excluded.iv,
-       salt = excluded.salt,
-       updated_at = unixepoch()`,
-    [provider, ciphertext, iv, salt]
-  )
+  db.insert(vaultKeys)
+    .values({ provider, ciphertext, iv, salt, updatedAt: sql`unixepoch()` })
+    .onConflictDoUpdate({
+      target: vaultKeys.provider,
+      set: {
+        ciphertext: sql`excluded.ciphertext`,
+        iv: sql`excluded.iv`,
+        salt: sql`excluded.salt`,
+        updatedAt: sql`unixepoch()`,
+      },
+    })
+    .run()
 }
 
 function getPassphrase(): string {

@@ -1,4 +1,6 @@
+import { eq, sql } from 'drizzle-orm'
 import { db } from '../db/client'
+import { gmailTokens } from '../db/tables'
 import { refreshGmailAccessToken } from './oauth'
 
 const REFRESH_SKEW_MS = 30_000
@@ -13,29 +15,48 @@ export interface GmailTokenRow {
 }
 
 export function saveGmailTokens(t: GmailTokenRow): void {
-  db.run(
-    `INSERT INTO gmail_tokens (user_id, access_token, refresh_token, expires_at, scope, history_id, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, unixepoch())
-     ON CONFLICT(user_id) DO UPDATE SET
-       access_token = excluded.access_token,
-       refresh_token = excluded.refresh_token,
-       expires_at = excluded.expires_at,
-       scope = excluded.scope,
-       history_id = COALESCE(excluded.history_id, gmail_tokens.history_id),
-       updated_at = unixepoch()`,
-    [t.user_id, t.access_token, t.refresh_token, t.expires_at, t.scope, t.history_id ?? null]
-  )
+  db.insert(gmailTokens)
+    .values({
+      userId: t.user_id,
+      accessToken: t.access_token,
+      refreshToken: t.refresh_token,
+      expiresAt: t.expires_at,
+      scope: t.scope,
+      historyId: t.history_id ?? null,
+      updatedAt: sql`unixepoch()`,
+    })
+    .onConflictDoUpdate({
+      target: gmailTokens.userId,
+      set: {
+        accessToken: sql`excluded.access_token`,
+        refreshToken: sql`excluded.refresh_token`,
+        expiresAt: sql`excluded.expires_at`,
+        scope: sql`excluded.scope`,
+        historyId: sql`COALESCE(excluded.history_id, ${gmailTokens.historyId})`,
+        updatedAt: sql`unixepoch()`,
+      },
+    })
+    .run()
 }
 
 export function loadGmailTokens(userId: string): GmailTokenRow | null {
-  const row = db
-    .query('SELECT user_id, access_token, refresh_token, expires_at, scope, history_id FROM gmail_tokens WHERE user_id = ?')
-    .get(userId) as GmailTokenRow | null
-  return row ?? null
+  const row = db.select().from(gmailTokens).where(eq(gmailTokens.userId, userId)).get()
+  if (!row) return null
+  return {
+    user_id: row.userId,
+    access_token: row.accessToken,
+    refresh_token: row.refreshToken,
+    expires_at: row.expiresAt,
+    scope: row.scope,
+    history_id: row.historyId,
+  }
 }
 
 export function setGmailHistoryId(userId: string, historyId: string): void {
-  db.run('UPDATE gmail_tokens SET history_id = ?, updated_at = unixepoch() WHERE user_id = ?', [historyId, userId])
+  db.update(gmailTokens)
+    .set({ historyId, updatedAt: sql`unixepoch()` })
+    .where(eq(gmailTokens.userId, userId))
+    .run()
 }
 
 export async function getValidGmailAccessToken(userId: string): Promise<string> {

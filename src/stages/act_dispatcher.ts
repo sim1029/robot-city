@@ -4,7 +4,9 @@ import { requestSendEmail } from '../tools/send_email'
 import { readCalendar } from '../tools/read_calendar'
 import { sendApprovalCardForApproval } from '../discord/dm'
 import { getValidGmailAccessToken } from '../gmail/tokens'
+import { and, desc, eq, gt } from 'drizzle-orm'
 import { db } from '../db/client'
+import { events } from '../db/tables'
 import { insertEvent } from '../db/events'
 
 export type DispatchResult =
@@ -33,16 +35,19 @@ export async function dispatchToolCall(
 
     if (toolName === 'read_email') {
       const since = Math.floor(Date.now() / 1000) - 86400
-      const rows = db.query(
-        `SELECT payload FROM events WHERE type = 'workflow:triage' AND created_at > ? ORDER BY created_at DESC LIMIT 10`
-      ).all(since) as Array<{ payload: string }>
+      const rows = db.select({ payload: events.payload })
+        .from(events)
+        .where(and(eq(events.type, 'workflow:triage'), gt(events.createdAt, since)))
+        .orderBy(desc(events.createdAt))
+        .limit(10)
+        .all()
       if (rows.length === 0) {
         logToolCall(ctx.sessionId, toolName, args, true)
         return { kind: 'executed', toolName, output: 'No emails triaged in the last 24 hours.' }
       }
       const lines = rows.map(r => {
         try {
-          const p = JSON.parse(r.payload) as { from?: string; subject?: string; classification?: string }
+          const p = JSON.parse(r.payload ?? 'null') as { from?: string; subject?: string; classification?: string }
           return `• [${p.classification?.toUpperCase()}] ${p.subject ?? '(no subject)'} from ${p.from ?? 'unknown'}`
         } catch {
           return '• (unreadable)'
