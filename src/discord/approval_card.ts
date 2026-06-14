@@ -1,12 +1,13 @@
 import type { Approval } from '../approvals/state'
 
-export const BUTTON_STYLE = { PRIMARY: 1, SECONDARY: 2, GREEN: 3, RED: 4 } as const
+export const BUTTON_STYLE = { PRIMARY: 1, SECONDARY: 2, GREEN: 3, RED: 4, LINK: 5 } as const
 
 export interface DiscordButton {
   type: 2
   style: number
   label: string
-  custom_id: string
+  custom_id?: string
+  url?: string
 }
 
 export interface DiscordActionRow {
@@ -102,12 +103,13 @@ export function buildEditModal(a: Approval): DiscordModal {
 
 export function buildReauthCardPayload(retryId: string, reauthUrl: string): DiscordMessagePayload {
   return {
-    content: `**Google authentication has expired.**\n[Re-authenticate with Google](${reauthUrl})\n\nOnce signed in, press **Retry** to run your request again.`,
+    content: '**Google authentication has expired.** Sign in again, then press **Retry**.',
     components: [
       {
         type: 1,
         components: [
-          { type: 2, style: BUTTON_STYLE.PRIMARY, label: 'Retry', custom_id: `reauth:${retryId}:retry` },
+          { type: 2, style: BUTTON_STYLE.LINK, label: 'Re-authenticate with Google', url: reauthUrl },
+          { type: 2, style: BUTTON_STYLE.GREEN, label: 'Retry', custom_id: `reauth:${retryId}:retry` },
         ],
       },
     ],
