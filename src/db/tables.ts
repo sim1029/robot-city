@@ -4,7 +4,6 @@ import { integer, real, sqliteTable, text } from 'drizzle-orm/sqlite-core'
 // Drizzle table definitions mirroring the DDL in schema.ts migrate().
 // schema.ts remains the source of truth for table creation (boot-time,
 // idempotent); these definitions exist for typed queries. Keep both in sync.
-// The contacts_fts virtual table + triggers are FTS5 and stay raw-SQL only.
 
 const unixepoch = sql`(unixepoch())`
 
@@ -84,13 +83,3 @@ export const adminSessions = sqliteTable('admin_sessions', {
   lastSeenAt: integer('last_seen_at').notNull().default(unixepoch),
 })
 
-export const contacts = sqliteTable('contacts', {
-  id: integer('id').primaryKey({ autoIncrement: true }),
-  email: text('email').unique().notNull(),
-  name: text('name').notNull().default(''),
-  aliases: text('aliases').notNull().default(''),
-  source: text('source').notNull().default('email'),
-  lastSeenAt: integer('last_seen_at'),
-  createdAt: integer('created_at').notNull().default(unixepoch),
-  updatedAt: integer('updated_at').notNull().default(unixepoch),
-})

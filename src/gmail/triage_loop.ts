@@ -3,8 +3,6 @@ import { triageMessage } from '../workflows/inbox_triage'
 import { requestSendEmail } from '../tools/send_email'
 import { sendApprovalCardForApproval } from '../discord/handlers'
 import { sendDm } from '../discord/dm'
-import { isPersonEmail, extractAddress, extractDisplayName } from '../contacts/filter'
-import { upsertContact } from '../contacts/client'
 import { isPaused } from '../system/pause'
 
 export interface TriageTickInput {
@@ -37,12 +35,6 @@ export async function runTriageTick(input: TriageTickInput): Promise<TriageTickR
       sessionId,
     })
     triaged++
-
-    if (isPersonEmail(result.from)) {
-      const email = extractAddress(result.from)
-      const name = extractDisplayName(result.from)
-      if (email) upsertContact(email, name, 'email')
-    }
 
     if (!result.shouldNotify) continue
     notified++

@@ -12,7 +12,6 @@ interface LayoutProps {
 
 const NAV = [
   { href: '/admin', label: 'Home' },
-  { href: '/admin/contacts', label: 'Contacts' },
   { href: '/admin/settings', label: 'Settings' },
   { href: '/admin/vault', label: 'Vault' },
   { href: '/admin/actions', label: 'Actions' },

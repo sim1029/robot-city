@@ -3,7 +3,6 @@ import { db } from '../db/client'
 import { events } from '../db/tables'
 import { getValidGmailAccessToken } from '../gmail/tokens'
 import { readCalendar } from '../tools/read_calendar'
-import { lookupContacts } from '../contacts/client'
 
 export async function gatherForIntent(classifyText: string, gmailUserId: string): Promise<string> {
   const upper = classifyText.toUpperCase()
@@ -39,34 +38,6 @@ export async function gatherForIntent(classifyText: string, gmailUserId: string)
     })
     return `[RECENT EMAILS]\n${lines.join('\n')}`
   }
-
-  if (upper.includes('SEND_EMAIL')) {
-    const hint = extractRecipientHint(classifyText)
-    if (hint) {
-      const candidates = lookupContacts(hint, 5)
-      if (candidates.length > 0) {
-        const list = candidates
-          .map(c => `• ${c.name || c.email} <${c.email}>`)
-          .join('\n')
-        return `[CONTACTS - matches for "${hint}"]\n${list}`
-      }
-    }
-    return '[CONTACTS]\nNo matching contacts found. Ask the user for the recipient\'s email address.'
-  }
-
-  return ''
-}
-
-// Pull the most likely recipient name out of a classify-stage output string.
-// Classify text looks like: "SEND_EMAIL: User wants to send an email to Bob Smith about..."
-function extractRecipientHint(classifyText: string): string {
-  // Match words immediately after "to" that start with capitals (person names)
-  const toMatch = classifyText.match(/\bto\s+([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)*)/i)
-  if (toMatch) return toMatch[1].trim()
-
-  // Fallback: any run of capitalized words not at sentence start
-  const caps = classifyText.match(/(?<!\.\s{0,3})[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+/g)
-  if (caps && caps.length > 0) return caps[0]
 
   return ''
 }

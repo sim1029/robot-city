@@ -19,7 +19,6 @@ const GMAIL_SCOPES = [
   'https://www.googleapis.com/auth/userinfo.email',
   'https://www.googleapis.com/auth/calendar.events',
   'https://www.googleapis.com/auth/calendar.calendarlist.readonly',
-  'https://www.googleapis.com/auth/contacts.readonly',
 ]
 
 export interface GmailTokens {
