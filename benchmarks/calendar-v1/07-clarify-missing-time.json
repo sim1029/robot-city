@@ -1,0 +1,5 @@
+{
+  "id": "clarify-missing-time", "title": "Ask for a missing event time", "tags": ["calendar", "clarification", "safety"], "turns": ["Put lunch with Maya on my calendar tomorrow."],
+  "world": { "now": "2026-07-19T09:00:00-04:00", "timezone": "America/New_York", "calendars": [{ "id": "primary", "summary": "Personal", "primary": true, "accessRole": "owner", "timeZone": "America/New_York" }], "events": [] },
+  "expect": { "intent": ["CREATE_CALENDAR_EVENT"], "tool": "none", "created": [], "reply": { "mustContain": ["time"] } }
+}

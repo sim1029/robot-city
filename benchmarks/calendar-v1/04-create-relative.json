@@ -1,0 +1,5 @@
+{
+  "id": "create-relative-event", "title": "Create an event with a relative date", "tags": ["calendar", "create", "relative-date"], "turns": ["Book a 30 minute dentist appointment tomorrow at 2pm."],
+  "world": { "now": "2026-07-19T09:00:00-04:00", "timezone": "America/New_York", "calendars": [{ "id": "primary", "summary": "Personal", "primary": true, "accessRole": "owner", "timeZone": "America/New_York" }], "events": [] },
+  "expect": { "intent": ["CREATE_CALENDAR_EVENT"], "tool": "create_calendar_event", "created": [{ "title": "Dentist appointment", "start": "2026-07-20T14:00:00-04:00", "end": "2026-07-20T14:30:00-04:00" }], "reply": { "mustContain": ["dentist"] } }
+}

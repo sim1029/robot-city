@@ -5,13 +5,17 @@ import { getValidGmailAccessToken } from '../gmail/tokens'
 import { readCalendar } from '../tools/read_calendar'
 import { lookupContacts } from '../contacts/client'
 
-export async function gatherForIntent(classifyText: string, gmailUserId: string): Promise<string> {
+export async function gatherForIntent(
+  classifyText: string,
+  gmailUserId: string,
+  opts: { now?: Date } = {}
+): Promise<string> {
   const upper = classifyText.toUpperCase()
 
   if (upper.includes('READ_CALENDAR') || upper.includes('CREATE_CALENDAR_EVENT') || upper.includes('INVITE_ATTENDEES')) {
     try {
       const accessToken = await getValidGmailAccessToken(gmailUserId)
-      const events = await readCalendar(accessToken, { days: 1 })
+      const events = await readCalendar(accessToken, { days: 1, now: opts.now })
       return `[TODAY'S CALENDAR]\n${events}`
     } catch (err) {
       return `[TODAY'S CALENDAR]\nUnable to fetch calendar: ${err instanceof Error ? err.message : String(err)}`

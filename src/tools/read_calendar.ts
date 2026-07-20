@@ -2,10 +2,10 @@ import { listEvents, type CalendarEvent } from '../calendar/client'
 
 export async function readCalendar(
   accessToken: string,
-  opts: { date?: string; days?: number } = {}
+  opts: { date?: string; days?: number; now?: Date } = {}
 ): Promise<string> {
   const days = opts.days ?? 1
-  const startDate = opts.date ? new Date(opts.date) : startOfDay(new Date())
+  const startDate = opts.date ? new Date(opts.date) : startOfDay(opts.now ?? new Date())
   const endDate = new Date(startDate)
   endDate.setDate(endDate.getDate() + days)
 

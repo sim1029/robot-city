@@ -41,6 +41,7 @@ src/
   tools/                # send_email, create_calendar_event (no approval), invite_attendees, read_calendar
   providers/            # router.ts + per-provider clients (anthropic, openai, google)
   stages/               # runner.ts, gather.ts (code-only data fetch), act_dispatcher.ts, types.ts
+  evals/                # live-model benchmark runner plus stateful fake Calendar/Discord worlds
   db/                   # schema.ts (raw DDL migrate) + tables.ts (Drizzle table defs, mirror schema.ts)
                         #   + client.ts (exports Drizzle `db` + raw `sqlite`) + settings.ts (KV helpers)
                         #   + sessions.ts (cost accumulator, discord_thread linkage, stats, close)
@@ -58,6 +59,7 @@ src/
                         #   Fragment POST handlers return small React nodes via renderFragment().
 public/admin/static/    # styles.css (htmx is loaded via CDN+SRI from Layout.tsx)
 tests/                  # bun test suites; tests/_helpers/fetch-mock.ts stubs HTTP globally
+benchmarks/             # calendar scenario fixtures, named model configurations, published result evidence
 data/                   # SQLite files (gitignored)
 pricing.json            # provider:model:tier → $/1M tokens, refreshed monthly
 docs/SPEC.md            # product spec — source of truth for *what* to build
@@ -77,6 +79,8 @@ fly.toml                # one always-on Machine, volume `robot_city_data` at /da
 | Test               | `npm run test`      |
 | Typecheck          | `bunx tsc --noEmit` |
 | Init Discord       | `bun run init`      |
+| Run live benchmark | `npm run eval -- --config baseline` |
+| Publish benchmark  | `npm run eval:publish -- data/evaluations/<result>.json` |
 
 NEVER use bun run test, the npm run test stage has important variables that it sets to that the local sqlite file is not overwritten
 
@@ -96,6 +100,7 @@ Tests live under `tests/` and use `bun test`. Stub HTTP via `installFetchMock()`
 - **Gmail history-gone recovery:** `pollGmail` re-baselines from `users.getProfile().historyId` on a 404 from `users.history.list` (Gmail drops history >7d). The gap is intentionally skipped and logged as `gmail:gap`. Don't try to backfill — use `messages.list` with a label filter if you need that later.
 - **Queries go through Drizzle (`db` from `src/db/client.ts`); the raw `sqlite` handle is for DDL/PRAGMA/FTS5 only.** Schema creation stays raw SQL in `schema.ts` `migrate()` (idempotent, boot-time, no drizzle-kit); the Drizzle table defs in `src/db/tables.ts` mirror it — if you ALTER a table in `migrate()`, update `tables.ts` in the same commit. FTS5 `MATCH`/`rank` queries (contacts search) can't be expressed in Drizzle and stay raw.
 - **The 5 tools are the product.** Don't add tools casually — `SPEC.md` §"The 5 tools" is the contract.
+- **Benchmarks are live-model only and explicitly published.** `calendar-v1` uses fake Calendar/Discord HTTP but the real assistant loop and provider call; normal runs are local evidence, while `eval:publish` creates committed benchmark documentation.
 
 ## Admin UI conventions
 

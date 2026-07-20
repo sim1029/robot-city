@@ -1,0 +1,6 @@
+{
+  "id": "baseline",
+  "label": "Baseline (Haiku 4.5 + Sonnet 4.6)",
+  "classifyModel": "claude-haiku-4-5-20251001",
+  "reasonModel": "claude-sonnet-4-6"
+}

@@ -1,0 +1,5 @@
+{
+  "id": "multiturn-event-correction", "title": "Create an event after a follow-up supplies the time", "tags": ["calendar", "create", "multi-turn"], "turns": ["Book coffee with Dana tomorrow.", "Make it 10am for 30 minutes."],
+  "world": { "now": "2026-07-19T09:00:00-04:00", "timezone": "America/New_York", "calendars": [{ "id": "primary", "summary": "Personal", "primary": true, "accessRole": "owner", "timeZone": "America/New_York" }], "events": [] },
+  "expect": { "intent": ["CREATE_CALENDAR_EVENT", "CONVERSATION"], "tool": "create_calendar_event", "created": [{ "title": "Coffee with Dana", "start": "2026-07-20T10:00:00-04:00", "end": "2026-07-20T10:30:00-04:00" }], "reply": { "mustContain": ["coffee"] } }
+}

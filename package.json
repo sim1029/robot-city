@@ -10,6 +10,8 @@
     "start": "bun src/index.ts",
     "init": "bun src/cli/init.ts",
     "test": "DB_PATH=:memory: bun test",
+    "eval": "DB_PATH=data/evaluations/robot-city-eval.db bun src/cli/eval.ts",
+    "eval:publish": "bun src/cli/publish_eval.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

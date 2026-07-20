@@ -110,9 +110,8 @@ Labels: READ_CALENDAR, CREATE_CALENDAR_EVENT, INVITE_ATTENDEES, READ_EMAIL, SEND
 
 User message: ${content}`
 
-function currentDateHeader(): string {
+function currentDateHeader(now = new Date()): string {
   const timezone = getSetting('timezone', 'UTC')
-  const now = new Date()
   const formatted = new Intl.DateTimeFormat('en-US', {
     timeZone: timezone,
     weekday: 'long',
@@ -234,6 +233,9 @@ export async function handleThreadMessage(args: {
   messageId: string
   content: string
   attachments?: DiscordMessageAttachment[]
+  /** Test/evaluation-only overrides. Production callers leave these unset. */
+  now?: Date
+  stageModels?: Partial<Record<'classify' | 'reason', string>>
 }): Promise<void> {
   const sessionId = `discord:${args.threadId}`
 
@@ -261,17 +263,18 @@ export async function handleThreadMessage(args: {
   const classifyResult = await runStage(
     'classify',
     INTERACTIVE_CLASSIFY_PROMPT(normalizedContent.content),
-    sessionId
+    sessionId,
+    args.stageModels?.classify ? { model: args.stageModels.classify } : {}
   )
 
   const gatherData = gmailUserId
-    ? await gatherForIntent(classifyResult.text, gmailUserId).catch(() => '')
+    ? await gatherForIntent(classifyResult.text, gmailUserId, { now: args.now }).catch(() => '')
     : ''
   const calendarContext = gmailUserId
     ? await availableCalendarsContext(gmailUserId)
     : ''
 
-  const dateHeader = currentDateHeader()
+  const dateHeader = currentDateHeader(args.now)
 
   const latestUserContent = [
     dateHeader,
@@ -295,6 +298,7 @@ export async function handleThreadMessage(args: {
   for (let iter = 0; iter < MAX_TOOL_ITERS; iter++) {
     const reasonResult = await runStage('reason', reasonMessages, sessionId, {
       tools: gmailUserId ? FORUM_TOOLS : undefined,
+      ...(args.stageModels?.reason ? { model: args.stageModels.reason } : {}),
     })
     allStageResults.push(reasonResult)
     if (reasonResult.text) finalReasonText = reasonResult.text
