@@ -1,0 +1,5 @@
+{
+  "id": "create-explicit-event", "title": "Create an event with an explicit date and time", "tags": ["calendar", "create", "smoke"], "turns": ["Create a 30 minute lunch with Maya on July 21 at noon."],
+  "world": { "now": "2026-07-19T09:00:00-04:00", "timezone": "America/New_York", "calendars": [{ "id": "primary", "summary": "Personal", "primary": true, "accessRole": "owner", "timeZone": "America/New_York" }], "events": [] },
+  "expect": { "intent": ["CREATE_CALENDAR_EVENT"], "tool": "create_calendar_event", "created": [{ "title": "Lunch with Maya", "start": "2026-07-21T12:00:00-04:00", "end": "2026-07-21T12:30:00-04:00" }], "reply": { "mustContain": ["lunch", "maya"] } }
+}

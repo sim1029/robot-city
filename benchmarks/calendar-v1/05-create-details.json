@@ -1,0 +1,5 @@
+{
+  "id": "create-event-with-details", "title": "Create an event with location and description", "tags": ["calendar", "create", "details"], "turns": ["Schedule Project kickoff on July 22 from 9 to 10am at Conference Room A. Description: bring the Q3 plan."],
+  "world": { "now": "2026-07-19T09:00:00-04:00", "timezone": "America/New_York", "calendars": [{ "id": "primary", "summary": "Personal", "primary": true, "accessRole": "owner", "timeZone": "America/New_York" }], "events": [] },
+  "expect": { "intent": ["CREATE_CALENDAR_EVENT"], "tool": "create_calendar_event", "created": [{ "title": "Project kickoff", "start": "2026-07-22T09:00:00-04:00", "end": "2026-07-22T10:00:00-04:00", "location": "Conference Room A" }], "reply": { "mustContain": ["kickoff"] } }
+}

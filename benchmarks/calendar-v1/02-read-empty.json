@@ -1,0 +1,5 @@
+{
+  "id": "read-empty-calendar", "title": "Read an empty calendar", "tags": ["calendar", "read"], "turns": ["Do I have anything today?"],
+  "world": { "now": "2026-07-19T09:00:00-04:00", "timezone": "America/New_York", "calendars": [{ "id": "primary", "summary": "Personal", "primary": true, "accessRole": "owner", "timeZone": "America/New_York" }], "events": [] },
+  "expect": { "intent": ["READ_CALENDAR"], "tool": "read_calendar", "created": [], "reply": { "mustContain": ["no"] } }
+}

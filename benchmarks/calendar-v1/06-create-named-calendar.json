@@ -1,0 +1,5 @@
+{
+  "id": "create-on-named-calendar", "title": "Create on a named writable calendar", "tags": ["calendar", "create", "calendar-selection"], "turns": ["Add Budget review to my Work calendar on July 23 from 3 to 4pm."],
+  "world": { "now": "2026-07-19T09:00:00-04:00", "timezone": "America/New_York", "calendars": [{ "id": "primary", "summary": "Personal", "primary": true, "accessRole": "owner", "timeZone": "America/New_York" }, { "id": "work@example.com", "summary": "Work", "accessRole": "writer", "timeZone": "America/New_York" }], "events": [] },
+  "expect": { "intent": ["CREATE_CALENDAR_EVENT"], "tool": "create_calendar_event", "created": [{ "title": "Budget review", "start": "2026-07-23T15:00:00-04:00", "end": "2026-07-23T16:00:00-04:00", "calendarId": "work@example.com" }], "reply": { "mustContain": ["budget"] } }
+}
